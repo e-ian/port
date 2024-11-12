@@ -2,23 +2,6 @@
 
 A comprehensive guide for creating YouTube playlist & Videos catalogue in Port, including data modeling, ingestion, and visualization.
 
-## Table of Contents
-- [Overview](#overview)
-- [Prerequisites](#prerequisites)
-- [Part 1: Data Modeling in Port](#part-1-data-modeling-in-port)
-  - [Creating the Playlist Blueprint](#creating-the-playlist-blueprint)
-  - [Creating the Video Blueprint](#creating-the-video-blueprint)
-  - [Blueprint YAML Representations](#blueprint-yaml-representations)
-- [Part 2: GitHub Workflow Setup](#part-2-github-workflow-setup)
-  - [Setting Up Repository Secrets](#setting-up-repository-secrets)
-  - [Creating the Workflow File](#creating-the-workflow-file)
-- [Part 3: Data Ingestion](#part-3-data-ingestion)
-- [Part 4: Creating Visualizations](#part-4-creating-visualizations)
-- [Value Proposition](#value-proposition)
-- [Troubleshooting](#troubleshooting)
-- [Relevant Links](#relevant-links)
-- [Author](#author)
-
 ## Overview
 
 This guide shows you how to set up a system for tracking YouTube playlists and video performance in Port. 
