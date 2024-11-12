@@ -21,11 +21,10 @@ A comprehensive guide for creating YouTube playlist & Videos catalogue in Port, 
 
 ## Overview
 
-This guide demonstrates how to create a comprehensive YouTube playlist tracking system in Port. You'll learn how to:
-- Model playlist and video data using Port blueprints
-- Set up automated data ingestion using GitHub Actions
-- Create meaningful visualizations of your YouTube data
-- Monitor playlist and video performance metrics
+This guide shows you how to set up a system for tracking YouTube playlists and video performance in Port. 
+You’ll learn how to organize your YouTube content, automate the tracking of video metrics, and create visualizations 
+to monitor playlist growth and audience engagement. The integration provides centralized content management, 
+real-time performance updates, and automated daily data updates, giving you the insights needed to make informed content decisions.
 
 ## Prerequisites
 
@@ -575,31 +574,6 @@ jobs:
    - The script includes a 0.1-second delay between video processing
    - YouTube API has daily quota limits - monitor your usage
    - Port API calls include retry logic for better reliability
-
-
-## Value Proposition
-
-Implementing this YouTube playlist integration with Port provides several key benefits:
-
-1. **Centralized Content Management**
-   - Track all your YouTube playlists and videos in one place
-   - Maintain organized catalog of video content
-   - Easy access to video metrics and performance data
-
-2. **Performance Monitoring**
-   - Real-time tracking of view counts and engagement metrics
-   - Monitor playlist growth and popularity
-   - Track audience engagement through likes and comments
-
-3. **Data-Driven Insights**
-   - Identify top-performing videos
-   - Analyze engagement patterns
-   - Make informed decisions about content strategy
-
-4. **Automated Tracking**
-   - Daily automatic updates of video metrics
-   - No manual data entry required
-   - Always up-to-date analytics
 
 
 ## Part 4: Creating Visualizations
