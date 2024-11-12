@@ -10,6 +10,11 @@ on:
             description: "The port context"
             required: true
 
+  push:
+    branches:
+        - ft-youtube-ingestion
+
+
 jobs:
   ingest-youtube-data:
     runs-on: ubuntu-latest
