@@ -1,9 +1,14 @@
 name: Ingest YouTube Playlist
 
 on:
-  schedule:
-    - cron: "0 0 * * *"  # Runs daily at midnight UTC
-  workflow_dispatch:      # Allows manual triggering
+  workflow_dispatch:
+    inputs:
+        playlist_id:
+            description: "Youtube video playlist id"
+            required: true
+        port_context:
+            description: "The port context"
+            required: true
 
 jobs:
   ingest-youtube-data:
