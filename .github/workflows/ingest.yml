@@ -9,9 +9,6 @@ on:
       port_context:
         description: "The port context"
         required: true
-  push:
-    branches:
-      - ft-youtube-ingestion
 
 jobs:
   authenticate:
