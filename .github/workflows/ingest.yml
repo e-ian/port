@@ -3,275 +3,128 @@ name: Ingest YouTube Playlist
 on:
   workflow_dispatch:
     inputs:
-        playlist_id:
-            description: "Youtube video playlist id"
-            required: true
-        port_context:
-            description: "The port context"
-            required: true
+      playlist_id:
+        description: "Youtube video playlist id"
+        required: true
+      port_context:
+        description: "The port context"
+        required: true
 
 jobs:
-  ingest-youtube-data:
+  authenticate:
     runs-on: ubuntu-latest
-    
-    env:
-      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-      PORT_API_KEY: ${{ secrets.PORT_API_KEY }}
-      PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
-      PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
-      PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
-      PORT_CONTEXT: ${{ github.event.inputs.port_context }}
-    
+    outputs:
+      port_token: ${{ steps.get_token.outputs.token }}
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install google-api-python-client requests
-    
-    - name: Run YouTube Port ingestion
-      run: |
-        python << 'EOF'
-        import os
-        import logging
-        import requests
-        from googleapiclient.discovery import build
-        from datetime import datetime
-        import sys
-        import time
+      - name: Get Port Token
+        id: get_token
+        run: |
+          if [ -n "${{ secrets.PORT_CLIENT_ID }}" ] && [ -n "${{ secrets.PORT_CLIENT_SECRET }}" ]; then
+            TOKEN=$(curl -X POST "https://api.getport.io/v1/auth/access_token" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "clientId": "${{ secrets.PORT_CLIENT_ID }}",
+                "clientSecret": "${{ secrets.PORT_CLIENT_SECRET }}"
+              }' | jq -r '.accessToken')
+          else
+            TOKEN="${{ secrets.PORT_API_KEY }}"
+          fi
+          echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
 
-        # Set up logging
-        logging.basicConfig(level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            stream=sys.stdout
-        )
-        logger = logging.getLogger(__name__)
+  fetch-playlist:
+    needs: authenticate
+    runs-on: ubuntu-latest
+    outputs:
+      playlist_data: ${{ steps.get_playlist.outputs.data }}
+    steps:
+      - name: Get Playlist Info
+        id: get_playlist
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
+        run: |
+          PLAYLIST_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
+          echo "data=${PLAYLIST_DATA}" >> "$GITHUB_OUTPUT"
 
-        class YouTubePortIngestion:
-            def __init__(self):
-                self.PLAYLIST_ID = os.environ['PLAYLIST_ID']
-                self.PORT_CONTEXT = os.environ['PORT_CONTEXT']
-                self.port_api_url = "https://api.getport.io/v1"
-                self.port_api_key = os.environ['PORT_API_KEY']
-                self.port_client_id = os.environ.get('PORT_CLIENT_ID')
-                self.port_client_secret = os.environ.get('PORT_CLIENT_SECRET')
-                self.playlist_blueprint_identifier = "playlist"
-                self.video_blueprint_identifier = "video"
-                self.access_token = None
-                try:
-                    self.youtube = build('youtube', 'v3', developerKey=os.environ['YOUTUBE_API_KEY'])
-                    self.refresh_port_token()
-                    logger.info("Successfully initialized clients")
-                except KeyError as e:
-                    logger.error(f"Missing environment variable: {str(e)}")
-                    raise
-                except Exception as e:
-                    logger.error(f"Error initializing clients: {str(e)}")
-                    raise
+      - name: Create/Update Playlist Entity
+        env:
+          PORT_TOKEN: ${{ needs.authenticate.outputs.port_token }}
+          PLAYLIST_DATA: ${{ steps.get_playlist.outputs.data }}
+        run: |
+          TITLE=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.title')
+          DESC=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.description')
+          THUMB=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
+          COUNT=$(echo $PLAYLIST_DATA | jq -r '.items[0].contentDetails.itemCount')
+          
+          curl -X POST "https://api.getport.io/v1/blueprints/playlist/entities" \
+            -H "Authorization: Bearer ${PORT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "identifier": "'${PLAYLIST_ID}'",
+              "properties": {
+                "title": "'${TITLE}'",
+                "description": "'${DESC}'",
+                "thumbnail_url": "'${THUMB}'",
+                "video_count": '${COUNT}'
+              }
+            }'
 
-            def refresh_port_token(self):
-                try:
-                    if self.port_client_id and self.port_client_secret:
-                        auth_url = f"{self.port_api_url}/auth/access_token"
-                        auth_data = {
-                            "clientId": self.port_client_id,
-                            "clientSecret": self.port_client_secret
-                        }
-                        response = requests.post(auth_url, json=auth_data)
-                        if response.status_code == 200:
-                            self.access_token = response.json().get('accessToken')
-                            logger.info("Successfully refreshed Port access token")
-                        else:
-                            raise Exception(f"Failed to get access token: {response.text}")
-                    else:
-                        self.access_token = self.port_api_key
-                except Exception as e:
-                    logger.error(f"Error refreshing token: {str(e)}")
-                    raise
-
-            def get_headers(self):
-                return {
-                    'Authorization': f"Bearer {self.access_token}",
-                    'Content-Type': 'application/json'
+  fetch-videos:
+    needs: [authenticate, fetch-playlist]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Videos
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
+          PORT_TOKEN: ${{ needs.authenticate.outputs.port_token }}
+        run: |
+          process_video() {
+            VIDEO_ID=$1
+            VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
+            
+            TITLE=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.title')
+            DESC=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.description')
+            THUMB=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
+            DURATION=$(echo $VIDEO_DATA | jq -r '.items[0].contentDetails.duration')
+            VIEWS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.viewCount')
+            LIKES=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.likeCount')
+            COMMENTS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.commentCount')
+            
+            curl -X POST "https://api.getport.io/v1/blueprints/video/entities" \
+              -H "Authorization: Bearer ${PORT_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "identifier": "'${VIDEO_ID}'",
+                "properties": {
+                  "title": "'${TITLE}'",
+                  "description": "'${DESC}'",
+                  "thumbnail_url": "'${THUMB}'",
+                  "duration": "'${DURATION}'",
+                  "view_count": '${VIEWS}',
+                  "like_count": '${LIKES}',
+                  "comment_count": '${COMMENTS}'
+                },
+                "relations": {
+                  "belongs_to": "'${PLAYLIST_ID}'"
                 }
-
-            def handle_response(self, response, operation):
-                if response.status_code == 401:
-                    logger.info("Token expired, refreshing...")
-                    self.refresh_port_token()
-                    return False
-                elif response.status_code not in [200, 201]:
-                    logger.error(f"Error {response.status_code}: {response.text}")
-                    raise Exception(f"Failed to {operation}: {response.text}")
-                return True
-
-            def fetch_playlist_info(self):
-                try:
-                    playlist_response = self.youtube.playlists().list(
-                        part='snippet,contentDetails',
-                        id=self.PLAYLIST_ID
-                    ).execute()
-                    
-                    if not playlist_response.get('items'):
-                        raise Exception(f"No playlist found with ID {self.PLAYLIST_ID}")
-                    
-                    playlist = playlist_response['items'][0]
-                    playlist_data = {
-                        'identifier': self.PLAYLIST_ID,
-                        'properties': {
-                            'title': playlist['snippet']['title'],
-                            'description': playlist['snippet']['description'],
-                            'thumbnail_url': playlist['snippet']['thumbnails']['default']['url'],
-                            'video_count': playlist['contentDetails']['itemCount']
-                        }
-                    }
-                    logger.info(f"Fetched playlist data: {playlist_data}")
-                    return playlist_data
-                except Exception as e:
-                    logger.error(f"Error fetching playlist info: {str(e)}")
-                    raise
-
-            def fetch_video_details(self, video_id):
-                try:
-                    video_response = self.youtube.videos().list(
-                        part='statistics,contentDetails,snippet',
-                        id=video_id
-                    ).execute()
-                    return video_response['items'][0] if video_response.get('items') else None
-                except Exception as e:
-                    logger.error(f"Error fetching video details for {video_id}: {str(e)}")
-                    return None
-
-            def update_or_create_entity(self, entity_data, blueprint_identifier):
-                max_retries = 3
-                retry_count = 0
-                
-                while retry_count < max_retries:
-                    try:
-                        url = f"{self.port_api_url}/blueprints/{blueprint_identifier}/entities"
-                        headers = self.get_headers()
-                        
-                        logger.info(f"Attempting to create/update entity with data: {entity_data}")
-                        
-                        existing_entity = self.get_entity(entity_data['identifier'], blueprint_identifier)
-                        
-                        if existing_entity:
-                            logger.info(f"Updating existing entity with ID {entity_data['identifier']}")
-                            response = requests.patch(
-                                f"{url}/{entity_data['identifier']}", 
-                                json=entity_data, 
-                                headers=headers
-                            )
-                        else:
-                            logger.info(f"Creating new entity with ID {entity_data['identifier']}")
-                            response = requests.post(url, json=entity_data, headers=headers)
-                        
-                        if self.handle_response(response, "create/update entity"):
-                            logger.info(f"Successfully handled entity with ID {entity_data['identifier']}")
-                            return
-                        
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            time.sleep(1)
-                            
-                    except Exception as e:
-                        logger.error(f"Error in update_or_create_entity: {str(e)}")
-                        retry_count += 1
-                        if retry_count >= max_retries:
-                            raise
-                        time.sleep(1)
-
-                raise Exception(f"Failed to create/update entity after {max_retries} attempts")
-
-            def get_entity(self, entity_id, blueprint_identifier):
-                try:
-                    url = f"{self.port_api_url}/blueprints/{blueprint_identifier}/entities/{entity_id}"
-                    response = requests.get(url, headers=self.get_headers())
-                    
-                    if response.status_code == 404:
-                        return None
-                    
-                    if self.handle_response(response, "fetch entity"):
-                        return response.json()
-                    return None
-                    
-                except Exception as e:
-                    logger.error(f"Error in get_entity: {str(e)}")
-                    return None
-
-            def process_videos(self, playlist_id):
-                try:
-                    next_page_token = None
-                    while True:
-                        video_response = self.youtube.playlistItems().list(
-                            part='snippet,contentDetails',
-                            playlistId=playlist_id,
-                            maxResults=50,
-                            pageToken=next_page_token
-                        ).execute()
-                        
-                        for item in video_response['items']:
-                            video_id = item['contentDetails']['videoId']
-                            video_details = self.fetch_video_details(video_id)
-                            
-                            if video_details:
-                                video_data = {
-                                    'identifier': video_id,
-                                    'properties': {
-                                        'title': item['snippet']['title'],
-                                        'description': item['snippet']['description'],
-                                        'thumbnail_url': item['snippet']['thumbnails']['default']['url'],
-                                        'duration': video_details['contentDetails']['duration'],
-                                        'view_count': int(video_details['statistics'].get('viewCount', 0)),
-                                        'like_count': int(video_details['statistics'].get('likeCount', 0)),
-                                        'comment_count': int(video_details['statistics'].get('commentCount', 0))
-                                    },
-                                    'relations': {
-                                        'belongs_to': playlist_id
-                                    }
-                                }
-                                
-                                self.update_or_create_entity(video_data, self.video_blueprint_identifier)
-                        
-                        next_page_token = video_response.get('nextPageToken')
-                        if not next_page_token:
-                            break
-                except Exception as e:
-                    logger.error(f"Error processing videos: {str(e)}")
-                    raise
-
-            def run(self):
-                try:
-                    logger.info(f"Starting ingestion at {datetime.now()}")
-                    logger.info(f"Using playlist ID: {self.PLAYLIST_ID}")
-                    logger.info(f"Using Port context: {self.PORT_CONTEXT}")
-                    
-                    # Process playlist
-                    playlist_data = self.fetch_playlist_info()
-                    self.update_or_create_entity(playlist_data, self.playlist_blueprint_identifier)
-                    
-                    # Process videos
-                    self.process_videos(self.PLAYLIST_ID)
-                    
-                    logger.info(f"Completed ingestion at {datetime.now()}")
-                except Exception as e:
-                    logger.error(f"Ingestion failed: {str(e)}")
-                    raise
-
-        if __name__ == "__main__":
-            try:
-                logger.info("Starting YouTube Port ingestion process")
-                ingestion = YouTubePortIngestion()
-                ingestion.run()
-                logger.info("Successfully completed YouTube Port ingestion")
-            except Exception as e:
-                logger.error(f"Fatal error in main execution: {str(e)}")
-                sys.exit(1)
-        EOF
+              }'
+          }
+          
+          PAGE_TOKEN=""
+          while true; do
+            ENDPOINT="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
+            if [ -n "$PAGE_TOKEN" ]; then
+              ENDPOINT="${ENDPOINT}&pageToken=${PAGE_TOKEN}"
+            fi
+            
+            RESPONSE=$(curl -s "$ENDPOINT")
+            echo $RESPONSE | jq -r '.items[].contentDetails.videoId' | while read VIDEO_ID; do
+              process_video "$VIDEO_ID"
+            done
+            
+            PAGE_TOKEN=$(echo $RESPONSE | jq -r '.nextPageToken')
+            if [ "$PAGE_TOKEN" = "null" ]; then
+              break
+            fi
+          done
