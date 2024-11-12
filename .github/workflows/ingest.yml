@@ -9,11 +9,9 @@ on:
         port_context:
             description: "The port context"
             required: true
-
   push:
     branches:
         - ft-youtube-ingestion
-
 
 jobs:
   ingest-youtube-data:
@@ -24,6 +22,8 @@ jobs:
       PORT_API_KEY: ${{ secrets.PORT_API_KEY }}
       PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
       PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
+      PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
+      PORT_CONTEXT: ${{ github.event.inputs.port_context }}
     
     steps:
     - name: Checkout repository
@@ -59,7 +59,8 @@ jobs:
 
         class YouTubePortIngestion:
             def __init__(self):
-                self.PLAYLIST_ID = 'PL5ErBr2d3QJH0kbwTQ7HSuzvBb4zIWzhy'
+                self.PLAYLIST_ID = os.environ['PLAYLIST_ID']
+                self.PORT_CONTEXT = os.environ['PORT_CONTEXT']
                 self.port_api_url = "https://api.getport.io/v1"
                 self.port_api_key = os.environ['PORT_API_KEY']
                 self.port_client_id = os.environ.get('PORT_CLIENT_ID')
@@ -236,7 +237,7 @@ jobs:
                                         'comment_count': int(video_details['statistics'].get('commentCount', 0))
                                     },
                                     'relations': {
-                                        'belongs_to': playlist_id  # Changed to match your blueprint relation name
+                                        'belongs_to': playlist_id
                                     }
                                 }
                                 
@@ -252,6 +253,8 @@ jobs:
             def run(self):
                 try:
                     logger.info(f"Starting ingestion at {datetime.now()}")
+                    logger.info(f"Using playlist ID: {self.PLAYLIST_ID}")
+                    logger.info(f"Using Port context: {self.PORT_CONTEXT}")
                     
                     # Process playlist
                     playlist_data = self.fetch_playlist_info()
