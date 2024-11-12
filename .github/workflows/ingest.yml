@@ -30,6 +30,7 @@ jobs:
             TOKEN="${{ secrets.PORT_API_KEY }}"
           fi
           echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
+          echo "Token obtained successfully"
 
   fetch-playlist:
     needs: authenticate
@@ -41,8 +42,16 @@ jobs:
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_TOKEN: ${{ needs.authenticate.outputs.port_token }}
         run: |
+          echo "Fetching playlist data for ID: ${PLAYLIST_ID}"
+          
           # Fetch playlist data
           RESPONSE=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
+          
+          # Check if response contains items
+          if [ "$(echo $RESPONSE | jq '.items | length')" -eq 0 ]; then
+            echo "Error: No playlist found with ID ${PLAYLIST_ID}"
+            exit 1
+          fi
           
           # Extract required fields using jq
           TITLE=$(echo $RESPONSE | jq -r '.items[0].snippet.title')
@@ -50,19 +59,45 @@ jobs:
           THUMB=$(echo $RESPONSE | jq -r '.items[0].snippet.thumbnails.default.url')
           COUNT=$(echo $RESPONSE | jq -r '.items[0].contentDetails.itemCount')
           
+          echo "Creating/Updating playlist entity in Port"
+          
+          # First check if entity exists
+          ENTITY_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://api.getport.io/v1/blueprints/playlist/entities/${PLAYLIST_ID}" \
+            -H "Authorization: Bearer ${PORT_TOKEN}")
+          
+          if [ "$ENTITY_CHECK" = "404" ]; then
+            echo "Creating new playlist entity"
+            METHOD="POST"
+            URL="https://api.getport.io/v1/blueprints/playlist/entities"
+          else
+            echo "Updating existing playlist entity"
+            METHOD="PATCH"
+            URL="https://api.getport.io/v1/blueprints/playlist/entities/${PLAYLIST_ID}"
+          fi
+          
           # Create/Update playlist entity
-          curl -X POST "https://api.getport.io/v1/blueprints/playlist/entities" \
+          RESPONSE=$(curl -X $METHOD "$URL" \
             -H "Authorization: Bearer ${PORT_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "{
               \"identifier\": \"${PLAYLIST_ID}\",
+              \"title\": \"${TITLE}\",
               \"properties\": {
                 \"title\": \"${TITLE}\",
                 \"description\": ${DESC},
                 \"thumbnail_url\": \"${THUMB}\",
                 \"video_count\": ${COUNT}
               }
-            }"
+            }")
+          
+          echo "Port API Response: $RESPONSE"
+          
+          # Check if the request was successful
+          if [ "$(echo $RESPONSE | jq -r '.ok // empty')" != "true" ]; then
+            echo "Error creating/updating playlist entity: $RESPONSE"
+            exit 1
+          fi
 
   fetch-videos:
     needs: [authenticate, fetch-playlist]
@@ -76,35 +111,70 @@ jobs:
         run: |
           process_video() {
             local VIDEO_ID=$1
+            echo "Processing video ID: ${VIDEO_ID}"
+            
             local VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
+            
+            if [ "$(echo $VIDEO_DATA | jq '.items | length')" -eq 0 ]; then
+              echo "Warning: No data found for video ID ${VIDEO_ID}"
+              return
+            }
             
             local TITLE=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.title | @json')
             local DESC=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.description | @json')
             local THUMB=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
             local DURATION=$(echo $VIDEO_DATA | jq -r '.items[0].contentDetails.duration')
-            local VIEWS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.viewCount')
-            local LIKES=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.likeCount')
-            local COMMENTS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.commentCount')
+            local VIEWS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.viewCount // "0"')
+            local LIKES=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.likeCount // "0"')
+            local COMMENTS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.commentCount // "0"')
             
-            curl -X POST "https://api.getport.io/v1/blueprints/video/entities" \
+            # Check if entity exists
+            local ENTITY_CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
+              "https://api.getport.io/v1/blueprints/video/entities/${VIDEO_ID}" \
+              -H "Authorization: Bearer ${PORT_TOKEN}")
+            
+            if [ "$ENTITY_CHECK" = "404" ]; then
+              echo "Creating new video entity"
+              local METHOD="POST"
+              local URL="https://api.getport.io/v1/blueprints/video/entities"
+            else
+              echo "Updating existing video entity"
+              local METHOD="PATCH"
+              local URL="https://api.getport.io/v1/blueprints/video/entities/${VIDEO_ID}"
+            fi
+            
+            local RESPONSE=$(curl -X $METHOD "$URL" \
               -H "Authorization: Bearer ${PORT_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "{
                 \"identifier\": \"${VIDEO_ID}\",
+                \"title\": ${TITLE},
                 \"properties\": {
                   \"title\": ${TITLE},
                   \"description\": ${DESC},
                   \"thumbnail_url\": \"${THUMB}\",
                   \"duration\": \"${DURATION}\",
-                  \"view_count\": ${VIEWS:-0},
-                  \"like_count\": ${LIKES:-0},
-                  \"comment_count\": ${COMMENTS:-0}
+                  \"view_count\": ${VIEWS},
+                  \"like_count\": ${LIKES},
+                  \"comment_count\": ${COMMENTS}
                 },
                 \"relations\": {
                   \"belongs_to\": \"${PLAYLIST_ID}\"
                 }
-              }"
+              }")
+            
+            echo "Port API Response for video ${VIDEO_ID}: $RESPONSE"
+            
+            # Check if the request was successful
+            if [ "$(echo $RESPONSE | jq -r '.ok // empty')" != "true" ]; then
+              echo "Error creating/updating video entity: $RESPONSE"
+              return
+            fi
+            
+            sleep 1  # Add small delay to avoid rate limits
           }
+          
+          echo "Starting video processing for playlist: ${PLAYLIST_ID}"
           
           PAGE_TOKEN=""
           while true; do
@@ -113,14 +183,21 @@ jobs:
               ENDPOINT="${ENDPOINT}&pageToken=${PAGE_TOKEN}"
             fi
             
+            echo "Fetching playlist items page"
             RESPONSE=$(curl -s "$ENDPOINT")
+            
+            if [ "$(echo $RESPONSE | jq '.items | length')" -eq 0 ]; then
+              echo "No more videos found in playlist"
+              break
+            fi
+            
             echo $RESPONSE | jq -r '.items[].contentDetails.videoId' | while read VIDEO_ID; do
               process_video "$VIDEO_ID"
-              sleep 1
             done
             
             PAGE_TOKEN=$(echo $RESPONSE | jq -r '.nextPageToken')
             if [ "$PAGE_TOKEN" = "null" ]; then
+              echo "No more pages to process"
               break
             fi
           done
