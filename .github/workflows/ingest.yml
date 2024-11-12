@@ -15,17 +15,34 @@ jobs:
     runs-on: ubuntu-latest
     env:
       YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-      PORT_API_KEY: ${{ secrets.PORT_API_KEY }}
+      PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
+      PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
       PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
     steps:
       - name: Process Playlist and Videos
         run: |
+          # Get Port access token
+          echo "Getting Port access token"
+          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"clientId\": \"${PORT_CLIENT_ID}\",
+              \"clientSecret\": \"${PORT_CLIENT_SECRET}\"
+            }")
+          
+          PORT_TOKEN=$(echo $TOKEN_RESPONSE | jq -r '.accessToken')
+          if [ -z "$PORT_TOKEN" ] || [ "$PORT_TOKEN" = "null" ]; then
+            echo "Failed to get access token"
+            echo "Response: $TOKEN_RESPONSE"
+            exit 1
+          fi
+          
           # Function to create Port entity
           create_port_entity() {
             local BLUEPRINT=$1
             local PAYLOAD=$2
             curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
-              -H "Authorization: Bearer ${PORT_API_KEY}" \
+              -H "Authorization: Bearer ${PORT_TOKEN}" \
               -H "Content-Type: application/json" \
               -d "$PAYLOAD"
           }
