@@ -166,87 +166,107 @@ Before starting this integration, ensure you have:
 When creating the blueprints in Port, you can also use these YAML definitions:
 
 #### Playlist Blueprint YAML
-```yaml
-identifier: playlist
-description: "Youtube playlist description"
-title: "playlist"
-icon: "Microservice"
-schema:
-  properties:
-    title:
-      type: "string"
-      title: "title"
-      description: "title of the playlist"
-    description:
-      type: "string"
-      title: "description"
-      description: "the description of the playlist"
-    thumbnail_url:
-      type: "string"
-      title: "thumbnailUrl"
-      description: "the URL of the playlist's thumbnail image"
-      format: "url"
-    video_count:
-      type: "number"
-      title: "videoCount"
-      description: "The number of videos in the playlist"
-  required:
-    - "title"
-mirrorProperties: {}
-calculationProperties: {}
-aggregationProperties: {}
-relations: {}
+
+```json
+{
+  "identifier": "playlist",
+  "description": "Youtube playlist description",
+  "title": "playlist",
+  "icon": "Microservice",
+  "schema": {
+    "properties": {
+      "title": {
+        "type": "string",
+        "title": "title",
+        "description": "title of the playlist"
+      },
+      "description": {
+        "type": "string",
+        "title": "description",
+        "description": "the description of the playlist"
+      },
+      "thumbnail_url": {
+        "type": "string",
+        "title": "thumbnailUrl",
+        "description": "the URL of the playlist's thumbnail image",
+        "format": "url"
+      },
+      "video_count": {
+        "type": "number",
+        "title": "videoCount",
+        "description": "The number of videos in the playlist"
+      }
+    },
+    "required": ["title"]
+  },
+  "mirrorProperties": {},
+  "calculationProperties": {},
+  "aggregationProperties": {},
+  "relations": {}
+}
 ```
 
 #### Video Blueprint YAML
-```yaml
-identifier: "video"
-description: "youtube video blueprint"
-title: "video"
-icon: "Microservice"
-schema:
-  properties:
-    title:
-      type: "string"
-      title: "title"
-      description: "the title of the video"
-    description:
-      type: "string"
-      title: "description"
-      description: "the description of the video"
-    thumbnail_url:
-      type: "string"
-      title: "thumbnailUrl"
-      description: "The URL of the video's thumbnail image"
-      format: "url"
-    duration:
-      type: "string"
-      title: "duration"
-      description: "the duration of the video"
-    view_count:
-      type: "number"
-      title: "viewCount"
-      description: "The number of views the video has received"
-    like_count:
-      type: "number"
-      title: "likeCount"
-      description: "The number of likes the video has received"
-    comment_count:
-      type: "number"
-      title: "commentCount"
-      description: "The number of comments the video has received"
-  required:
-    - "title"
-mirrorProperties: {}
-calculationProperties: {}
-aggregationProperties: {}
-relations:
-  belongs_to:
-    title: "Belongs To"
-    description: "relationship between video and playlist"
-    target: "playlist"
-    required: true
-    many: false
+```json
+{
+  "identifier": "video",
+  "description": "youtube video blueprint",
+  "title": "video",
+  "icon": "Microservice",
+  "schema": {
+    "properties": {
+      "title": {
+        "type": "string",
+        "title": "title",
+        "description": "the title of the video"
+      },
+      "description": {
+        "type": "string",
+        "title": "description",
+        "description": "the description of the video"
+      },
+      "thumbnail_url": {
+        "type": "string",
+        "title": "thumbnailUrl",
+        "description": "The URL of the video's thumbnail image",
+        "format": "url"
+      },
+      "duration": {
+        "type": "string",
+        "title": "duration",
+        "description": "the duration of the video"
+      },
+      "view_count": {
+        "type": "number",
+        "title": "viewCount",
+        "description": "The number of views the video has received"
+      },
+      "like_count": {
+        "type": "number",
+        "title": "likeCount",
+        "description": "The number of likes the video has received"
+      },
+      "comment_count": {
+        "type": "number",
+        "title": "commentCount",
+        "description": "The number of comments the video has received"
+      }
+    },
+    "required": ["title"]
+  },
+  "mirrorProperties": {},
+  "calculationProperties": {},
+  "aggregationProperties": {},
+  "relations": {
+    "belongs_to": {
+      "title": "Belongs To",
+      "description": "relationship between video and playlist",
+      "target": "playlist",
+      "required": true,
+      "many": false
+    }
+  }
+}
 ```
 
 ## Part 2: GitHub Workflow Setup
@@ -282,268 +302,153 @@ relations:
 name: Ingest YouTube Playlist
 
 on:
-  schedule:
-    - cron: "0 0 * * *"  # Runs daily at midnight UTC
-  workflow_dispatch:      # Allows manual triggering
+  workflow_dispatch:
+    inputs:
+      playlist_id:
+        description: "Youtube video playlist id"
+        required: true
+      port_context:
+        description: "The port context"
+        required: true
 
 jobs:
-  ingest-youtube-data:
+  ingest-data:
     runs-on: ubuntu-latest
-    
     env:
       YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-      PORT_API_KEY: ${{ secrets.PORT_API_KEY }}
       PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
       PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
-    
+      PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install google-api-python-client requests
-    
-    - name: Run YouTube Port ingestion
-      run: |
-        python << 'EOF'
-        import os
-        import logging
-        import requests
-        from googleapiclient.discovery import build
-        from datetime import datetime
-        import sys
-        import time
+      - name: Process Playlist and Videos
+        run: |
+          # Get Port access token
+          echo "Getting Port access token"
+          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"clientId\": \"${PORT_CLIENT_ID}\",
+              \"clientSecret\": \"${PORT_CLIENT_SECRET}\"
+            }")
+          
+          PORT_TOKEN=$(echo $TOKEN_RESPONSE | jq -r '.accessToken')
+          if [ -z "$PORT_TOKEN" ] || [ "$PORT_TOKEN" = "null" ]; then
+            echo "Failed to get access token"
+            echo "Response: $TOKEN_RESPONSE"
+            exit 1
+          fi
+          
+          # Function to create Port entity
+          create_port_entity() {
+            local BLUEPRINT=$1
+            local PAYLOAD=$2
+            curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
+              -H "Authorization: Bearer ${PORT_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD"
+          }
 
-        # Set up logging
-        logging.basicConfig(level=logging.INFO,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            stream=sys.stdout
-        )
-        logger = logging.getLogger(__name__)
+          echo "Fetching playlist data"
+          PLAYLIST_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
+          
+          if [ "$(echo $PLAYLIST_DATA | jq '.items | length')" -eq 0 ]; then
+            echo "Error: No playlist found"
+            exit 1
+          fi
 
-        class YouTubePortIngestion:
-            def __init__(self):
-                self.PLAYLIST_ID = 'PL5ErBr2d3QJH0kbwTQ7HSuzvBb4zIWzhy'  # Replace with your playlist ID
-                self.port_api_url = "https://api.getport.io/v1"
-                self.port_api_key = os.environ['PORT_API_KEY']
-                self.port_client_id = os.environ.get('PORT_CLIENT_ID')
-                self.port_client_secret = os.environ.get('PORT_CLIENT_SECRET')
-                self.playlist_blueprint_identifier = "playlist"
-                self.video_blueprint_identifier = "video"
-                self.access_token = None
-                try:
-                    self.youtube = build('youtube', 'v3', developerKey=os.environ['YOUTUBE_API_KEY'])
-                    self.refresh_port_token()
-                    logger.info("Successfully initialized clients")
-                except KeyError as e:
-                    logger.error(f"Missing environment variable: {str(e)}")
-                    raise
-                except Exception as e:
-                    logger.error(f"Error initializing clients: {str(e)}")
-                    raise
+          # Process playlist
+          TITLE=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.title')
+          DESC=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.description')
+          THUMB=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
+          COUNT=$(echo $PLAYLIST_DATA | jq -r '.items[0].contentDetails.itemCount')
 
-            def refresh_port_token(self):
-                try:
-                    if self.port_client_id and self.port_client_secret:
-                        auth_url = f"{self.port_api_url}/auth/access_token"
-                        auth_data = {
-                            "clientId": self.port_client_id,
-                            "clientSecret": self.port_client_secret
-                        }
-                        response = requests.post(auth_url, json=auth_data)
-                        if response.status_code == 200:
-                            self.access_token = response.json().get('accessToken')
-                            logger.info("Successfully refreshed Port access token")
-                        else:
-                            raise Exception(f"Failed to get access token: {response.text}")
-                    else:
-                        self.access_token = self.port_api_key
-                except Exception as e:
-                    logger.error(f"Error refreshing token: {str(e)}")
-                    raise
+          # Create sanitized JSON for playlist
+          PLAYLIST_PAYLOAD=$(jq -n \
+            --arg id "$PLAYLIST_ID" \
+            --arg title "$TITLE" \
+            --arg desc "$DESC" \
+            --arg thumb "$THUMB" \
+            --arg count "$COUNT" \
+            '{
+              identifier: $id,
+              title: $title,
+              properties: {
+                title: $title,
+                description: $desc,
+                thumbnail_url: $thumb,
+                video_count: ($count|tonumber)
+              }
+            }')
 
-            def get_headers(self):
-                return {
-                    'Authorization': f"Bearer {self.access_token}",
-                    'Content-Type': 'application/json'
-                }
+          echo "Creating playlist entity"
+          PLAYLIST_RESPONSE=$(create_port_entity "playlist" "$PLAYLIST_PAYLOAD")
+          echo "Playlist Response: ${PLAYLIST_RESPONSE}"
 
-            def handle_response(self, response, operation):
-                if response.status_code == 401:
-                    logger.info("Token expired, refreshing...")
-                    self.refresh_port_token()
-                    return False
-                elif response.status_code not in [200, 201]:
-                    logger.error(f"Error {response.status_code}: {response.text}")
-                    raise Exception(f"Failed to {operation}: {response.text}")
-                return True
+          # Process videos
+          process_videos() {
+            local PAGE_TOKEN=$1
+            local API_URL="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
+            if [ -n "${PAGE_TOKEN}" ]; then
+              API_URL="${API_URL}&pageToken=${PAGE_TOKEN}"
+            fi
 
-            def fetch_playlist_info(self):
-                try:
-                    playlist_response = self.youtube.playlists().list(
-                        part='snippet,contentDetails',
-                        id=self.PLAYLIST_ID
-                    ).execute()
-                    
-                    if not playlist_response.get('items'):
-                        raise Exception(f"No playlist found with ID {self.PLAYLIST_ID}")
-                    
-                    playlist = playlist_response['items'][0]
-                    playlist_data = {
-                        'identifier': self.PLAYLIST_ID,
-                        'properties': {
-                            'title': playlist['snippet']['title'],
-                            'description': playlist['snippet']['description'],
-                            'thumbnail_url': playlist['snippet']['thumbnails']['default']['url'],
-                            'video_count': playlist['contentDetails']['itemCount']
-                        }
+            local ITEMS_RESPONSE=$(curl -s "${API_URL}")
+            echo $ITEMS_RESPONSE | jq -r '.items[].contentDetails.videoId' | while read -r VIDEO_ID; do
+              echo "Processing video: ${VIDEO_ID}"
+              
+              VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
+              
+              if [ "$(echo $VIDEO_DATA | jq '.items | length')" -gt 0 ]; then
+                local V_TITLE=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.title')
+                local V_DESC=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.description')
+                local V_THUMB=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
+                local V_DURATION=$(echo $VIDEO_DATA | jq -r '.items[0].contentDetails.duration')
+                local V_VIEWS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.viewCount // "0"')
+                local V_LIKES=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.likeCount // "0"')
+                local V_COMMENTS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.commentCount // "0"')
+
+                # Create sanitized JSON for video
+                local VIDEO_PAYLOAD=$(jq -n \
+                  --arg id "$VIDEO_ID" \
+                  --arg title "$V_TITLE" \
+                  --arg desc "$V_DESC" \
+                  --arg thumb "$V_THUMB" \
+                  --arg duration "$V_DURATION" \
+                  --arg views "$V_VIEWS" \
+                  --arg likes "$V_LIKES" \
+                  --arg comments "$V_COMMENTS" \
+                  --arg playlist_id "$PLAYLIST_ID" \
+                  '{
+                    identifier: $id,
+                    title: $title,
+                    properties: {
+                      title: $title,
+                      description: $desc,
+                      thumbnail_url: $thumb,
+                      duration: $duration,
+                      view_count: ($views|tonumber),
+                      like_count: ($likes|tonumber),
+                      comment_count: ($comments|tonumber)
+                    },
+                    relations: {
+                      belongs_to: $playlist_id
                     }
-                    logger.info(f"Fetched playlist data: {playlist_data}")
-                    return playlist_data
-                except Exception as e:
-                    logger.error(f"Error fetching playlist info: {str(e)}")
-                    raise
+                  }')
 
-            def fetch_video_details(self, video_id):
-                try:
-                    video_response = self.youtube.videos().list(
-                        part='statistics,contentDetails,snippet',
-                        id=video_id
-                    ).execute()
-                    return video_response['items'][0] if video_response.get('items') else None
-                except Exception as e:
-                    logger.error(f"Error fetching video details for {video_id}: {str(e)}")
-                    return None
+                VIDEO_RESPONSE=$(create_port_entity "video" "$VIDEO_PAYLOAD")
+                echo "Video Response: ${VIDEO_RESPONSE}"
+                sleep 1
+              fi
+            done
 
-            def get_entity(self, entity_id, blueprint_identifier):
-                try:
-                    url = f"{self.port_api_url}/blueprints/{blueprint_identifier}/entities/{entity_id}"
-                    response = requests.get(url, headers=self.get_headers())
-                    if response.status_code == 200:
-                        return response.json()
-                    elif response.status_code == 404:
-                        return None
-                    else:
-                        logger.error(f"Error getting entity: {response.text}")
-                        return None
-                except Exception as e:
-                    logger.error(f"Error in get_entity: {str(e)}")
-                    return None
+            local NEXT_PAGE=$(echo $ITEMS_RESPONSE | jq -r '.nextPageToken')
+            if [ "${NEXT_PAGE}" != "null" ]; then
+              process_videos "${NEXT_PAGE}"
+            fi
+          }
 
-            def update_or_create_entity(self, entity_data, blueprint_identifier):
-                max_retries = 3
-                retry_count = 0
-                
-                while retry_count < max_retries:
-                    try:
-                        url = f"{self.port_api_url}/blueprints/{blueprint_identifier}/entities"
-                        headers = self.get_headers()
-                        
-                        logger.info(f"Attempting to create/update entity with data: {entity_data}")
-                        
-                        existing_entity = self.get_entity(entity_data['identifier'], blueprint_identifier)
-                        
-                        if existing_entity:
-                            logger.info(f"Updating existing entity with ID {entity_data['identifier']}")
-                            response = requests.patch(
-                                f"{url}/{entity_data['identifier']}", 
-                                json=entity_data, 
-                                headers=headers
-                            )
-                        else:
-                            logger.info(f"Creating new entity with ID {entity_data['identifier']}")
-                            response = requests.post(url, json=entity_data, headers=headers)
-                        
-                        if self.handle_response(response, "create/update entity"):
-                            logger.info(f"Successfully handled entity with ID {entity_data['identifier']}")
-                            return
-                        
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            time.sleep(1)
-                            
-                    except Exception as e:
-                        logger.error(f"Error in update_or_create_entity: {str(e)}")
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            time.sleep(1)
-                        else:
-                            raise
-
-            def process_playlist_videos(self):
-                try:
-                    playlist_items_request = self.youtube.playlistItems().list(
-                        part='snippet,contentDetails',
-                        playlistId=self.PLAYLIST_ID,
-                        maxResults=50
-                    )
-                    
-                    while playlist_items_request:
-                        playlist_items_response = playlist_items_request.execute()
-                        
-                        for item in playlist_items_response.get('items', []):
-                            video_id = item['contentDetails']['videoId']
-                            video_details = self.fetch_video_details(video_id)
-                            
-                            if video_details:
-                                video_data = {
-                                    'identifier': video_id,
-                                    'title': video_details['snippet']['title'],
-                                    'properties': {
-                                        'title': video_details['snippet']['title'],
-                                        'description': video_details['snippet']['description'],
-                                        'thumbnail_url': video_details['snippet']['thumbnails']['default']['url'],
-                                        'duration': video_details['contentDetails']['duration'],
-                                        'view_count': int(video_details['statistics'].get('viewCount', 0)),
-                                        'like_count': int(video_details['statistics'].get('likeCount', 0)),
-                                        'comment_count': int(video_details['statistics'].get('commentCount', 0))
-                                    },
-                                    'relations': {
-                                        'belongs_to': self.PLAYLIST_ID
-                                    }
-                                }
-                                
-                                self.update_or_create_entity(video_data, self.video_blueprint_identifier)
-                                logger.info(f"Processed video: {video_id}")
-                                time.sleep(0.1)  # Rate limiting
-                        
-                        playlist_items_request = self.youtube.playlistItems().list_next(
-                            playlist_items_request, playlist_items_response)
-                        
-                except Exception as e:
-                    logger.error(f"Error processing playlist videos: {str(e)}")
-                    raise
-
-            def run(self):
-                try:
-                    # First update/create playlist entity
-                    playlist_data = self.fetch_playlist_info()
-                    self.update_or_create_entity(playlist_data, self.playlist_blueprint_identifier)
-                    
-                    # Then process all videos in the playlist
-                    self.process_playlist_videos()
-                    
-                    logger.info("Successfully completed YouTube Port ingestion")
-                    
-                except Exception as e:
-                    logger.error(f"Error during ingestion run: {str(e)}")
-                    raise
-
-        if __name__ == "__main__":
-            try:
-                ingestion = YouTubePortIngestion()
-                ingestion.run()
-            except Exception as e:
-                logger.error(f"Failed to complete ingestion: {str(e)}")
-                sys.exit(1)
-        EOF
+          echo "Starting video processing"
+          process_videos ""
 ```
 
 3. **Important Configuration Notes**
@@ -552,11 +457,6 @@ jobs:
    - Manual triggering is enabled through `workflow_dispatch`
    - The script includes retry logic and rate limiting for API calls
    - Comprehensive error handling and logging is implemented
-
-4. **Rate Limiting and Quotas**
-   - The script includes a 0.1-second delay between video processing
-   - YouTube API has daily quota limits - monitor your usage
-   - Port API calls include retry logic for better reliability
 
 
 ## Part 4: Creating Visualizations
