@@ -11,55 +11,23 @@ on:
         required: true
 
 jobs:
-  authenticate:
-    runs-on: ubuntu-latest
-    outputs:
-      port_token: ${{ steps.get_token.outputs.token }}
-    steps:
-      - name: Get Port Token
-        id: get_token
-        env:
-          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
-          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
-          PORT_API_KEY: ${{ secrets.PORT_API_KEY }}
-        run: |
-          if [ -n "${PORT_CLIENT_ID}" ] && [ -n "${PORT_CLIENT_SECRET}" ]; then
-            echo "Using client credentials authentication"
-            TOKEN=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
-              -H "Content-Type: application/json" \
-              -d "{\"clientId\": \"${PORT_CLIENT_ID}\", \"clientSecret\": \"${PORT_CLIENT_SECRET}\"}" \
-              | jq -r '.accessToken')
-          else
-            echo "Using API key authentication"
-            TOKEN="${PORT_API_KEY}"
-          fi
-          echo "::add-mask::${TOKEN}"
-          echo "token=${TOKEN}" >> "$GITHUB_OUTPUT"
-          echo "Token obtained successfully"
-
   ingest-data:
-    needs: authenticate
     runs-on: ubuntu-latest
+    env:
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      PORT_API_KEY: ${{ secrets.PORT_API_KEY }}
+      PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
     steps:
       - name: Process Playlist and Videos
-        env:
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-          PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
-          PORT_TOKEN: ${{ needs.authenticate.outputs.port_token }}
         run: |
           # Function to create Port entity
           create_port_entity() {
             local BLUEPRINT=$1
             local PAYLOAD=$2
             curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
-              -H "Authorization: Bearer ${PORT_TOKEN}" \
+              -H "Authorization: Bearer ${PORT_API_KEY}" \
               -H "Content-Type: application/json" \
               -d "$PAYLOAD"
-          }
-
-          # Function to sanitize JSON string
-          sanitize_json_string() {
-            echo "$1" | jq -R -s '.' | sed 's/^.\(.*\).$/\1/'
           }
 
           echo "Fetching playlist data"
