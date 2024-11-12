@@ -9,6 +9,9 @@ on:
       port_context:
         description: "The port context"
         required: true
+  push:
+    branches:
+      - ft-youtube-ingestion
 
 jobs:
   authenticate:
@@ -34,81 +37,76 @@ jobs:
   fetch-playlist:
     needs: authenticate
     runs-on: ubuntu-latest
-    outputs:
-      playlist_data: ${{ steps.get_playlist.outputs.data }}
     steps:
-      - name: Get Playlist Info
-        id: get_playlist
+      - name: Get and Process Playlist Info
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
-        run: |
-          PLAYLIST_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
-          echo "data=${PLAYLIST_DATA}" >> "$GITHUB_OUTPUT"
-
-      - name: Create/Update Playlist Entity
-        env:
           PORT_TOKEN: ${{ needs.authenticate.outputs.port_token }}
-          PLAYLIST_DATA: ${{ steps.get_playlist.outputs.data }}
         run: |
-          TITLE=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.title')
-          DESC=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.description')
-          THUMB=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
-          COUNT=$(echo $PLAYLIST_DATA | jq -r '.items[0].contentDetails.itemCount')
+          # Fetch playlist data
+          RESPONSE=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
           
+          # Extract required fields using jq
+          TITLE=$(echo $RESPONSE | jq -r '.items[0].snippet.title')
+          DESC=$(echo $RESPONSE | jq -r '.items[0].snippet.description | @json')
+          THUMB=$(echo $RESPONSE | jq -r '.items[0].snippet.thumbnails.default.url')
+          COUNT=$(echo $RESPONSE | jq -r '.items[0].contentDetails.itemCount')
+          
+          # Create/Update playlist entity
           curl -X POST "https://api.getport.io/v1/blueprints/playlist/entities" \
             -H "Authorization: Bearer ${PORT_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{
-              "identifier": "'${PLAYLIST_ID}'",
-              "properties": {
-                "title": "'${TITLE}'",
-                "description": "'${DESC}'",
-                "thumbnail_url": "'${THUMB}'",
-                "video_count": '${COUNT}'
+            -d "{
+              \"identifier\": \"${PLAYLIST_ID}\",
+              \"properties\": {
+                \"title\": \"${TITLE}\",
+                \"description\": ${DESC},
+                \"thumbnail_url\": \"${THUMB}\",
+                \"video_count\": ${COUNT}
               }
-            }'
+            }"
 
   fetch-videos:
     needs: [authenticate, fetch-playlist]
     runs-on: ubuntu-latest
     steps:
-      - name: Get Videos
+      - name: Get and Process Videos
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_TOKEN: ${{ needs.authenticate.outputs.port_token }}
         run: |
           process_video() {
-            VIDEO_ID=$1
-            VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
+            local VIDEO_ID=$1
+            local VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
             
-            TITLE=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.title')
-            DESC=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.description')
-            THUMB=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
-            DURATION=$(echo $VIDEO_DATA | jq -r '.items[0].contentDetails.duration')
-            VIEWS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.viewCount')
-            LIKES=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.likeCount')
-            COMMENTS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.commentCount')
+            local TITLE=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.title | @json')
+            local DESC=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.description | @json')
+            local THUMB=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
+            local DURATION=$(echo $VIDEO_DATA | jq -r '.items[0].contentDetails.duration')
+            local VIEWS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.viewCount')
+            local LIKES=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.likeCount')
+            local COMMENTS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.commentCount')
             
             curl -X POST "https://api.getport.io/v1/blueprints/video/entities" \
               -H "Authorization: Bearer ${PORT_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d '{
-                "identifier": "'${VIDEO_ID}'",
-                "properties": {
-                  "title": "'${TITLE}'",
-                  "description": "'${DESC}'",
-                  "thumbnail_url": "'${THUMB}'",
-                  "duration": "'${DURATION}'",
-                  "view_count": '${VIEWS}',
-                  "like_count": '${LIKES}',
-                  "comment_count": '${COMMENTS}'
+              -d "{
+                \"identifier\": \"${VIDEO_ID}\",
+                \"properties\": {
+                  \"title\": ${TITLE},
+                  \"description\": ${DESC},
+                  \"thumbnail_url\": \"${THUMB}\",
+                  \"duration\": \"${DURATION}\",
+                  \"view_count\": ${VIEWS:-0},
+                  \"like_count\": ${LIKES:-0},
+                  \"comment_count\": ${COMMENTS:-0}
                 },
-                "relations": {
-                  "belongs_to": "'${PLAYLIST_ID}'"
+                \"relations\": {
+                  \"belongs_to\": \"${PLAYLIST_ID}\"
                 }
-              }'
+              }"
           }
           
           PAGE_TOKEN=""
@@ -121,6 +119,7 @@ jobs:
             RESPONSE=$(curl -s "$ENDPOINT")
             echo $RESPONSE | jq -r '.items[].contentDetails.videoId' | while read VIDEO_ID; do
               process_video "$VIDEO_ID"
+              sleep 1
             done
             
             PAGE_TOKEN=$(echo $RESPONSE | jq -r '.nextPageToken')
