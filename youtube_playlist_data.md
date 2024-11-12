@@ -451,13 +451,6 @@ jobs:
           process_videos ""
 ```
 
-3. **Important Configuration Notes**
-   - Replace `PLAYLIST_ID` in the code with your actual YouTube playlist ID
-   - The workflow runs daily at midnight UTC (`cron: "0 0 * * *"`)
-   - Manual triggering is enabled through `workflow_dispatch`
-   - The script includes retry logic and rate limiting for API calls
-   - Comprehensive error handling and logging is implemented
-
 
 ## Part 4: Creating Visualizations
 
