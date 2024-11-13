@@ -522,41 +522,41 @@ After the data is ingested, create these visualizations to monitor your YouTube 
 2. Click "+ Add Widget"
 3. Select "Number Chart"
 4. Configure:
-   - Title: "Total Videos"
-   - Under Query Definition:
-     - Blueprint: Select "video"
-     - Aggregation: Select "Count"
+
+<details>
+<summary>Click to see details and example configuration image</summary>
+<img src="./assets/videocount.png" alt="Video count in playlist">
+</details>
 
 ### 2. Average Likes Metric
 1. Click "+ Add Widget"
 2. Select "Number Chart"
 3. Configure:
-   - Title: "Average Likes"
-   - Under Query Definition:
-     - Blueprint: Select "video"
-     - Aggregation: Select "Average"
-     - Property: Select "like_count"
+
+<details>
+<summary>Click to see details and example configuration image</summary>
+<img src="./assets/averagelikes.png" alt="Average likes card">
+</details>
 
 ### 3. Video Details Table
 1. Click "+ Add Widget"
 2. Select "Table"
 3. Configure:
-   - Title: "Video Details"
-   - Select Blueprint: "video"
-   - Add Columns:
-     - Title
-     - View Count
-     - Like Count
-     - Comment Count
-     - Duration
+
+<details>
+<summary>Click to see details and example configuration image</summary>
+<img src="./assets/videodetails.png" alt="Video details table">
+</details>
 
 ### 4. Engagement Distribution Pie Chart
 1. Click "+ Add Widget"
 2. Select "Pie Chart"
 3. Configure:
-   - Title: "Video Engagement Distribution"
-   - Select Blueprint: "video"
-   - Group By: "view_count"
+
+<details>
+<summary>Click to see details and example configuration image</summary>
+<img src="./assets/engagementdist.png" alt="Video engagement distribution">
+</details>
 
 ### YouTube Playlist Analytics Dashboard Layout
 
