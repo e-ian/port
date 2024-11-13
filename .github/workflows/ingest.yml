@@ -8,6 +8,7 @@ on:
        required: true
      port_context:
        description: "The port context"
+       type: string
        required: true
 
 jobs:
@@ -22,6 +23,7 @@ jobs:
          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
        run: |
+         echo "Getting Port token..."
          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
            -H "Content-Type: application/json" \
            -d "{
@@ -29,13 +31,23 @@ jobs:
              \"clientSecret\": \"${PORT_CLIENT_SECRET}\"
            }")
          
-         PORT_TOKEN=$(echo $TOKEN_RESPONSE | jq -r '.accessToken')
-         if [ -z "$PORT_TOKEN" ] || [ "$PORT_TOKEN" = "null" ]; then
+         ACCESS_TOKEN=$(echo $TOKEN_RESPONSE | jq -r '.accessToken')
+         if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
            echo "Failed to get access token"
            echo "Response: $TOKEN_RESPONSE"
            exit 1
          fi
-         echo "token=${PORT_TOKEN}" >> "$GITHUB_OUTPUT"
+
+         # Verify token works
+         TEST_RESPONSE=$(curl -s -H "Authorization: Bearer $ACCESS_TOKEN" https://api.getport.io/v1/blueprints)
+         if [ "$(echo $TEST_RESPONSE | jq -r '.ok // false')" != "true" ]; then
+           echo "Token validation failed"
+           echo "Response: $TEST_RESPONSE"
+           exit 1
+         fi
+
+         echo "Token validated successfully"
+         echo "token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
 
  ingest-data:
    needs: get-port-token
@@ -48,6 +60,16 @@ jobs:
          PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
          PORT_CONTEXT: ${{ inputs.port_context }}
        run: |
+         # Verify token at the start
+         echo "Verifying Port token..."
+         TEST_RESPONSE=$(curl -s -H "Authorization: Bearer $PORT_TOKEN" https://api.getport.io/v1/blueprints)
+         if [ "$(echo $TEST_RESPONSE | jq -r '.ok // false')" != "true" ]; then
+           echo "Token verification failed"
+           echo "Response: $TEST_RESPONSE"
+           exit 1
+         fi
+         echo "Token verified successfully"
+
          # Function to update Port action status
          update_port_status() {
            local STATUS=$1
@@ -61,7 +83,7 @@ jobs:
            ESCAPED_LOGS=$(echo "$LOGS" | jq -R -s '.')
            
            curl -X PATCH "https://api.getport.io/v1/actions/runs/${RUN_ID}" \
-             -H "Authorization: Bearer ${PORT_TOKEN}" \
+             -H "Authorization: Bearer $PORT_TOKEN" \
              -H "Content-Type: application/json" \
              -d "{
                \"status\": \"${STATUS}\",
@@ -84,7 +106,7 @@ jobs:
            local BLUEPRINT=$1
            local PAYLOAD=$2
            curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
-             -H "Authorization: Bearer ${PORT_TOKEN}" \
+             -H "Authorization: Bearer $PORT_TOKEN" \
              -H "Content-Type: application/json" \
              -d "$PAYLOAD"
          }
@@ -231,7 +253,7 @@ jobs:
          RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
          
          curl -X PATCH "https://api.getport.io/v1/actions/runs/${RUN_ID}" \
-           -H "Authorization: Bearer ${PORT_TOKEN}" \
+           -H "Authorization: Bearer $PORT_TOKEN" \
            -H "Content-Type: application/json" \
            -d '{
              "status": "FAILED",
