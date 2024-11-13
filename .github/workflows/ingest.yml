@@ -16,8 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       port_token: ${{ steps.get_token.outputs.token }}
-      client_id: ${{ steps.get_token.outputs.client_id }}
-      client_secret: ${{ steps.get_token.outputs.client_secret }}
     steps:
       - name: Get Port Token
         id: get_token
@@ -26,9 +24,11 @@ jobs:
           PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
         run: |
           echo "Getting Port token..."
-          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+          TOKEN_RESPONSE=$(curl -s -X POST \
+            -H "accept: application/json" \
             -H "Content-Type: application/json" \
-            -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
+            -d "{\"clientId\":\"$PORT_CLIENT_ID\",\"clientSecret\":\"$PORT_CLIENT_SECRET\"}" \
+            "https://api.getport.io/v1/auth/access_token")
           
           ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
           if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
@@ -38,20 +38,15 @@ jobs:
           fi
 
           # Test token works before passing it
-          TEST_RESPONSE=$(curl -s -H "Authorization: Bearer $ACCESS_TOKEN" https://api.getport.io/v1/blueprints)
+          TEST_RESPONSE=$(curl -s -H "Authorization: Bearer $ACCESS_TOKEN" "https://api.getport.io/v1/blueprints")
           if [ "$(echo "$TEST_RESPONSE" | jq -r '.ok // false')" != "true" ]; then
             echo "Token validation failed"
             echo "Response: $TEST_RESPONSE"
             exit 1
           fi
 
-          # Pass token and credentials for potential refresh
           echo "token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
-          echo "client_id=$PORT_CLIENT_ID" >> $GITHUB_OUTPUT
-          echo "client_secret=$PORT_CLIENT_SECRET" >> $GITHUB_OUTPUT
           echo "::add-mask::$ACCESS_TOKEN"
-          echo "::add-mask::$PORT_CLIENT_ID"
-          echo "::add-mask::$PORT_CLIENT_SECRET"
 
   ingest-data:
     needs: get-port-token
@@ -62,68 +57,44 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
-          PORT_CLIENT_ID: ${{ needs.get-port-token.outputs.client_id }}
-          PORT_CLIENT_SECRET: ${{ needs.get-port-token.outputs.client_secret }}
           PORT_CONTEXT: ${{ inputs.port_context }}
         run: |
-          # Function to refresh Port token
-          refresh_port_token() {
-            echo "Refreshing Port token..."
-            local TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
-              -H "Content-Type: application/json" \
-              -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
-            
-            local NEW_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
-            if [ -z "$NEW_TOKEN" ] || [ "$NEW_TOKEN" = "null" ]; then
-              echo "Failed to refresh token"
-              echo "Response: $TOKEN_RESPONSE"
-              return 1
-            fi
-            
-            PORT_TOKEN="$NEW_TOKEN"
-            return 0
-          }
-
-          # Function to make authenticated Port API call with auto-refresh
+          # Function to handle Port API calls
           port_api_call() {
             local METHOD=$1
-            local URL=$2
+            local ENDPOINT=$2
             local DATA=$3
-            local RETRY_COUNT=0
             local MAX_RETRIES=3
+            local RETRY_COUNT=0
 
             while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
               local RESPONSE
               if [ -n "$DATA" ]; then
-                RESPONSE=$(curl -s -X "$METHOD" "$URL" \
+                RESPONSE=$(curl -s -X "$METHOD" \
                   -H "Authorization: Bearer $PORT_TOKEN" \
                   -H "Content-Type: application/json" \
-                  -d "$DATA")
+                  -d "$DATA" \
+                  "https://api.getport.io/v1/$ENDPOINT")
               else
-                RESPONSE=$(curl -s -X "$METHOD" "$URL" \
+                RESPONSE=$(curl -s -X "$METHOD" \
                   -H "Authorization: Bearer $PORT_TOKEN" \
-                  -H "Content-Type: application/json")
+                  -H "Content-Type: application/json" \
+                  "https://api.getport.io/v1/$ENDPOINT")
               fi
 
-              # Check if unauthorized and needs refresh
-              if echo "$RESPONSE" | grep -q "unauthorized\|token.*expired"; then
-                if refresh_port_token; then
-                  ((RETRY_COUNT++))
-                  continue
-                else
-                  return 1
-                fi
+              if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" = "true" ] || [ $RETRY_COUNT -eq $((MAX_RETRIES-1)) ]; then
+                echo "$RESPONSE"
+                return 0
               fi
 
-              echo "$RESPONSE"
-              return 0
+              ((RETRY_COUNT++))
+              sleep 1
             done
 
-            echo "{\"ok\":false,\"error\":\"Max retries exceeded\"}"
             return 1
           }
 
-          # Function to update Port action status with retry
+          # Function to update Port action status
           update_port_status() {
             local STATUS=$1
             local MESSAGE=$2
@@ -135,13 +106,11 @@ jobs:
             # Escape logs for JSON
             ESCAPED_LOGS=$(echo "$LOGS" | jq -R -s '.')
             
-            local PAYLOAD="{
+            port_api_call "PATCH" "actions/runs/${RUN_ID}" "{
               \"status\": \"${STATUS}\",
               \"message\": \"${MESSAGE}\",
               \"logs\": ${ESCAPED_LOGS}
             }"
-
-            port_api_call "PATCH" "https://api.getport.io/v1/actions/runs/${RUN_ID}" "$PAYLOAD"
           }
 
           # Initialize logs variable
@@ -153,12 +122,12 @@ jobs:
             echo "$1"
           }
 
-          # Function to create Port entity with retry
+          # Function to create Port entity
           create_port_entity() {
             local BLUEPRINT=$1
             local PAYLOAD=$2
+            local RESPONSE=$(port_api_call "POST" "blueprints/${BLUEPRINT}/entities" "$PAYLOAD")
             
-            local RESPONSE=$(port_api_call "POST" "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" "$PAYLOAD")
             if [ "$(echo $RESPONSE | jq -r '.ok // false')" != "true" ]; then
               append_log "Warning: Failed to create ${BLUEPRINT} entity"
               append_log "Response: $RESPONSE"
@@ -305,39 +274,16 @@ jobs:
         if: failure()
         env:
           PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
-          PORT_CLIENT_ID: ${{ needs.get-port-token.outputs.client_id }}
-          PORT_CLIENT_SECRET: ${{ needs.get-port-token.outputs.client_secret }}
           PORT_CONTEXT: ${{ inputs.port_context }}
         run: |
-          # Function to refresh token
-          refresh_port_token() {
-            echo "Refreshing Port token..."
-            local TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
-              -H "Content-Type: application/json" \
-              -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
-            
-            PORT_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
-            [ -n "$PORT_TOKEN" ] && [ "$PORT_TOKEN" != "null" ]
-          }
-
-          # Try to report failure with token refresh
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
           
-          report_failure() {
-            curl -s -X PATCH "https://api.getport.io/v1/actions/runs/${RUN_ID}" \
-              -H "Authorization: Bearer $PORT_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d '{
-                "status": "FAILED",
-                "message": "Workflow failed to complete",
-                "logs": "Check GitHub Actions logs for details"
-              }'
-          }
-
-          # Try to report with current token
-          RESPONSE=$(report_failure)
-          if echo "$RESPONSE" | grep -q "unauthorized\|token.*expired"; then
-            if refresh_port_token; then
-              report_failure
-            fi
-          fi
+          curl -s -X PATCH \
+            -H "Authorization: Bearer $PORT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "status": "FAILED",
+              "message": "Workflow failed to complete",
+              "logs": "Check GitHub Actions logs for details"
+            }' \
+            "https://api.getport.io/v1/actions/runs/${RUN_ID}"
