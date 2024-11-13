@@ -18,21 +18,34 @@ jobs:
       playlist_title: ${{ steps.playlist_info.outputs.title }}
       playlist_count: ${{ steps.playlist_info.outputs.count }}
     steps:
+      - name: Get Port Token
+        id: get_token
+        env:
+          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
+          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
+        run: |
+          # Get Port token
+          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
+          
+          # Extract and export token
+          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
+          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+
       - name: Get Playlist Info and Create Port Entity
         id: playlist_info
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
-          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
-          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
           PORT_CONTEXT: ${{ inputs.port_context }}
         run: |
           # Update action status
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
           curl -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"status":"RUNNING","message":"Starting playlist ingestion"}' \
-            --user "$PORT_CLIENT_ID:$PORT_CLIENT_SECRET"
+            -d '{"status":"RUNNING","message":"Starting playlist ingestion"}'
 
           # Fetch playlist data
           echo "Fetching playlist data"
@@ -40,9 +53,9 @@ jobs:
           
           if [ "$(echo $PLAYLIST_DATA | jq '.items | length')" -eq 0 ]; then
             curl -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
-              -d '{"status":"FAILED","message":"Playlist not found"}' \
-              --user "$PORT_CLIENT_ID:$PORT_CLIENT_SECRET"
+              -d '{"status":"FAILED","message":"Playlist not found"}'
             exit 1
           fi
 
@@ -72,9 +85,9 @@ jobs:
 
           echo "Creating playlist entity"
           curl -X POST "https://api.getport.io/v1/blueprints/playlist/entities" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "$PLAYLIST_PAYLOAD" \
-            --user "$PORT_CLIENT_ID:$PORT_CLIENT_SECRET"
+            -d "$PLAYLIST_PAYLOAD"
 
           # Set outputs for next job
           echo "title=$TITLE" >> $GITHUB_OUTPUT
@@ -84,12 +97,25 @@ jobs:
     needs: create-playlist
     runs-on: ubuntu-latest
     steps:
+      - name: Get Port Token
+        id: get_token
+        env:
+          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
+          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
+        run: |
+          # Get Port token
+          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
+          
+          # Extract and export token
+          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
+          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+
       - name: Process Videos
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
-          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
-          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
           PORT_CONTEXT: ${{ inputs.port_context }}
           PLAYLIST_TITLE: ${{ needs.create-playlist.outputs.playlist_title }}
         run: |
@@ -102,9 +128,9 @@ jobs:
           create_video_entity() {
             local PAYLOAD=$1
             curl -s -X POST "https://api.getport.io/v1/blueprints/video/entities" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "$PAYLOAD" \
-              --user "$PORT_CLIENT_ID:$PORT_CLIENT_SECRET"
+              -d "$PAYLOAD"
           }
 
           # Function to update action status
@@ -112,9 +138,9 @@ jobs:
             local STATUS=$1
             local MESSAGE=$2
             curl -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "{\"status\":\"$STATUS\",\"message\":\"$MESSAGE\"}" \
-              --user "$PORT_CLIENT_ID:$PORT_CLIENT_SECRET"
+              -d "{\"status\":\"$STATUS\",\"message\":\"$MESSAGE\"}"
           }
 
           # Process videos function
@@ -167,7 +193,8 @@ jobs:
                     }
                   }')
 
-                if create_video_entity "$VIDEO_PAYLOAD" | jq -e '.ok == true' > /dev/null; then
+                RESPONSE=$(create_video_entity "$VIDEO_PAYLOAD")
+                if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" = "true" ]; then
                   ((VIDEOS_PROCESSED++))
                 else
                   ((VIDEOS_FAILED++))
@@ -198,13 +225,11 @@ jobs:
       - name: Report Failure
         if: failure()
         env:
-          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
-          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
           PORT_CONTEXT: ${{ inputs.port_context }}
         run: |
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
           
           curl -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"status":"FAILED","message":"Workflow failed to complete"}' \
-            --user "$PORT_CLIENT_ID:$PORT_CLIENT_SECRET"
+            -d '{"status":"FAILED","message":"Workflow failed to complete"}'
