@@ -46,7 +46,7 @@ jobs:
          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
          PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
          PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
-         PORT_CONTEXT: ${{ toJson(inputs.port_context) }}
+         PORT_CONTEXT: ${{ inputs.port_context }}
        run: |
          # Function to update Port action status
          update_port_status() {
@@ -55,7 +55,10 @@ jobs:
            local LOGS=$3
            
            # Parse port context for run ID
-           RUN_ID=$(echo $PORT_CONTEXT | jq -r '.runId')
+           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
+           
+           # Escape logs for JSON
+           ESCAPED_LOGS=$(echo "$LOGS" | jq -R -s '.')
            
            curl -X PATCH "https://api.getport.io/v1/actions/runs/${RUN_ID}" \
              -H "Authorization: Bearer ${PORT_TOKEN}" \
@@ -63,7 +66,7 @@ jobs:
              -d "{
                \"status\": \"${STATUS}\",
                \"message\": \"${MESSAGE}\",
-               \"logs\": \"${LOGS}\"
+               \"logs\": ${ESCAPED_LOGS}
              }"
          }
 
@@ -133,6 +136,10 @@ jobs:
            exit 1
          fi
 
+         # Initialize video counter
+         VIDEOS_PROCESSED=0
+         VIDEOS_FAILED=0
+
          # Process videos
          process_videos() {
            local PAGE_TOKEN=$1
@@ -190,9 +197,15 @@ jobs:
                # Check if video creation was successful
                if [ "$(echo $VIDEO_RESPONSE | jq -r '.ok // false')" != "true" ]; then
                  append_log "Warning: Failed to create video entity for ${VIDEO_ID}"
+                 ((VIDEOS_FAILED++))
+               else
+                 ((VIDEOS_PROCESSED++))
                fi
 
                sleep 1
+             else
+               append_log "Warning: No data found for video ${VIDEO_ID}"
+               ((VIDEOS_FAILED++))
              fi
            done
 
@@ -205,16 +218,17 @@ jobs:
          append_log "Starting video processing"
          process_videos ""
          
-         # Update final status
-         update_port_status "SUCCESS" "Successfully ingested YouTube playlist and videos" "$LOGS"
+         # Update final status with processing summary
+         FINAL_MESSAGE="Processed ${VIDEOS_PROCESSED} videos successfully, ${VIDEOS_FAILED} failed"
+         update_port_status "SUCCESS" "$FINAL_MESSAGE" "$LOGS"
 
      - name: Report Failure
        if: failure()
        env:
          PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
-         PORT_CONTEXT: ${{ toJson(inputs.port_context) }}
+         PORT_CONTEXT: ${{ inputs.port_context }}
        run: |
-         RUN_ID=$(echo $PORT_CONTEXT | jq -r '.runId')
+         RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
          
          curl -X PATCH "https://api.getport.io/v1/actions/runs/${RUN_ID}" \
            -H "Authorization: Bearer ${PORT_TOKEN}" \
