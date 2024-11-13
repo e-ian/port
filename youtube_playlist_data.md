@@ -12,27 +12,25 @@ real-time performance updates, and automated daily data updates, giving you the 
 ## Prerequisites
 
 Before starting this integration, ensure you have:
-   - Sign up at [app.getport.io](https://app.getport.io) and verify your email
+   - Sign up at [app.getport.io](https://app.getport.io)
    - Log into your Port account at [app.getport.io](https://app.getport.io)
    - Install Port's Github app by clicking [here](https://github.com/apps/getport-io/installations/new)
    - Obtain a YouTube Data API v3 key via the [Google Cloud Console](https://console.cloud.google.com)
    - Prepare your Port organization's Client ID and Client Secret. To find you Port credentials, click [here](https://docs.getport.io/build-your-software-catalog/custom-integration/api/#find-your-port-credentials).
 
 ## Data Modeling in Port
+This section outlines the data model for managing YouTube content in Port. The model consists of two main blueprints: `playlist` and `video`, designed to track YouTube playlists and their associated videos. The relationship between playlists and videos is maintained through a one-to-many relationship, where each video belongs to a playlist.
 
-### Creating the Playlist Blueprint
+### Setting up Blueprints
    - Log into Port
-   - Click "Builder" in the left sidebar
+   - Click ["Builder"](https://app.getport.io/settings/data-model) in the left sidebar
    - Click "+ New Blueprint"
    - In the model that pops up, click on "{---} Edit JSON"
-   - Copy and paste the json config below to have for the blueprint properties
+   - Copy and paste the json configs below to have for the Playlist and Video blueprint properties
 
 
 <details>
 <summary>Click to expand Playlist Blueprint JSON</summary>
-
-<div class="code-container">
-<button class="copy-button" onclick="copyCode(this)">Copy</button>
 
 ```json
 {
@@ -73,59 +71,11 @@ Before starting this integration, ensure you have:
 }
 ```
 
-</div>
-
-  <style>
-  .code-container {
-    position: relative;
-  }
-
-  .copy-button {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    padding: 5px 10px;
-    background-color: #f1f1f1;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-    cursor: pointer;
-  }
-
-  .copy-button:hover {
-    background-color: #e1e1e1;
-  }
-  </style>
-
-  <script>
-  function copyCode(button) {
-    const codeBlock = button.nextElementSibling;
-    const code = codeBlock.innerText;
-    
-    navigator.clipboard.writeText(code).then(() => {
-      const originalText = button.innerText;
-      button.innerText = 'Copied!';
-      setTimeout(() => {
-        button.innerText = originalText;
-      }, 2000);
-    }).catch(err => {
-      console.error('Failed to copy:', err);
-    });
-  }
-  </script>
-
 </details>
 
-### Creating the Video Blueprint
-   - Click "Builder" in the left sidebar
-   - Click "+ New Blueprint"
-   - In the model that pops up, click on "{---} Edit JSON"
-   - Copy and paste the json config below to have for the blueprint properties
 
 <details>
 <summary>Click to expand Video Blueprint JSON</summary>
-
-<div class="code-container">
-<button class="copy-button" onclick="copyCode(this)">Copy</button>
 
 ```json
 {
@@ -189,46 +139,6 @@ Before starting this integration, ensure you have:
 }
 ```
 
-</div>
-
-  <style>
-  .code-container {
-    position: relative;
-  }
-
-  .copy-button {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    padding: 5px 10px;
-    background-color: #f1f1f1;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-    cursor: pointer;
-  }
-
-  .copy-button:hover {
-    background-color: #e1e1e1;
-  }
-  </style>
-
-  <script>
-  function copyCode(button) {
-    const codeBlock = button.nextElementSibling;
-    const code = codeBlock.innerText;
-    
-    navigator.clipboard.writeText(code).then(() => {
-      const originalText = button.innerText;
-      button.innerText = 'Copied!';
-      setTimeout(() => {
-        button.innerText = originalText;
-      }, 2000);
-    }).catch(err => {
-      console.error('Failed to copy:', err);
-    });
-  }
-  </script>
-
 </details>
 
 ## Self service setup
@@ -238,9 +148,6 @@ Before starting this integration, ensure you have:
 
   <details>
   <summary>Click to expand Self-service config JSON</summary>
-
-  <div class="code-container">
-  <button class="copy-button" onclick="copyCode(this)">Copy</button>
 
   ```json
   {
@@ -288,49 +195,9 @@ Before starting this integration, ensure you have:
 
   ```
 
-  </div>
-
-  <style>
-  .code-container {
-    position: relative;
-  }
-
-  .copy-button {
-    position: absolute;
-    top: 5px;
-    right: 5px;
-    padding: 5px 10px;
-    background-color: #f1f1f1;
-    border: 1px solid #ccc;
-    border-radius: 3px;
-    cursor: pointer;
-  }
-
-  .copy-button:hover {
-    background-color: #e1e1e1;
-  }
-  </style>
-
-  <script>
-  function copyCode(button) {
-    const codeBlock = button.nextElementSibling;
-    const code = codeBlock.innerText;
-    
-    navigator.clipboard.writeText(code).then(() => {
-      const originalText = button.innerText;
-      button.innerText = 'Copied!';
-      setTimeout(() => {
-        button.innerText = originalText;
-      }, 2000);
-    }).catch(err => {
-      console.error('Failed to copy:', err);
-    });
-  }
-  </script>
-
   </details>
 
-## GitHub Workflow Setup
+## GitHub workflow
    - Go to your GitHub repository settings
    - Add each of these secrets:
      ```
@@ -339,15 +206,13 @@ Before starting this integration, ensure you have:
      PORT_CLIENT_ID (Your Port Client ID)
      PORT_CLIENT_SECRET (Your Port Client Secret)
      ```
-
-#### Creating the Workflow File
-   - Create new file: `ingest.yml` in the directory `.github/workflows`
+   - Create new file: `ingest.yml` in the directory `.github/workflows` and pass the secrets.
    - Add the following GitHub Actions workflow configuration:
 
 <details>
-<summary>Click to expand GitHub Workflow YAML 📋</summary>
+<summary>Click to expand GitHub Workflow YAML</summary>
 
-  ```yaml copy
+  ```yaml
   name: Ingest YouTube Playlist
 
   on:
@@ -506,7 +371,7 @@ Before starting this integration, ensure you have:
 - On the Self-service tab, navigate to the self-service you created and click on "Create".
 - The pop-up below will be shown, enter the value of the youtube `playlist_id` and click execute
 <details>
-<summary>Click to see example Self-Service Execution 🖼️</summary>
+<summary>Click to see example Self-Service Execution</summary>
 <img src="./assets/execute.png" alt="Self-Service Execution">
 </details>
 - This will trigger the workflow and you can track the progress from your port account.
@@ -561,6 +426,6 @@ After the data is ingested, create these visualizations to monitor your YouTube 
 ### YouTube Playlist Analytics Dashboard Layout
 
 <details>
-<summary>Click to see example YouTube Analytics Dashboard 🖼️</summary>
+<summary>Click to see example YouTube Analytics Dashboard</summary>
 <img src="./assets/youtube_analytics_dashboard.png" alt="YouTube Analytics Dashboard">
 </details>
