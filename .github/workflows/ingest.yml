@@ -12,23 +12,26 @@ on:
         required: true
 
 jobs:
-  get-port-token:
+  ingest-data:
     runs-on: ubuntu-latest
-    outputs:
-      token: ${{ steps.get_token.outputs.port_token }}
+    env:
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
+      PORT_CONTEXT: ${{ inputs.port_context }}
+      PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
+      PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
     steps:
-      - name: Get Port Token
-        id: get_token
-        env:
-          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
-          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
+      - name: Process Playlist and Videos
         run: |
-          # Get Port token
+          # Get Port token at the start
+          echo "Getting Port token..."
           TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
             -H "Content-Type: application/json" \
-            -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
+            -d "{
+              \"clientId\": \"$PORT_CLIENT_ID\",
+              \"clientSecret\": \"$PORT_CLIENT_SECRET\"
+            }")
           
-          # Extract token
           PORT_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
           if [ -z "$PORT_TOKEN" ] || [ "$PORT_TOKEN" = "null" ]; then
             echo "Failed to get access token"
@@ -36,37 +39,13 @@ jobs:
             exit 1
           fi
 
-          # Save token to output
-          echo "port_token=$PORT_TOKEN" >> $GITHUB_OUTPUT
-
-  ingest-data:
-    needs: get-port-token
-    runs-on: ubuntu-latest
-    env:
-      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-      PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
-    steps:
-      - name: Process Playlist and Videos
-        env:
-          PORT_TOKEN: ${{ needs.get-port-token.outputs.token }}
-          PORT_CONTEXT: ${{ inputs.port_context }}
-        run: |
-          # Parse run ID from context
+          # Update Port action status
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
-
-          # Function to update action status
-          update_action_status() {
-            local STATUS="$1"
-            local MESSAGE="$2"
-            local LOGS="$3"
-            curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-              -H "Authorization: Bearer $PORT_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{\"status\":\"$STATUS\",\"message\":\"$MESSAGE\",\"logs\":\"$LOGS\"}"
-          }
-
-          # Update status to running
-          update_action_status "RUNNING" "Starting playlist ingestion" ""
+          
+          curl -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+            -H "Authorization: Bearer $PORT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"status":"RUNNING","message":"Starting playlist ingestion"}'
 
           # Function to create Port entity
           create_port_entity() {
@@ -78,16 +57,19 @@ jobs:
               -d "$PAYLOAD"
           }
 
-          # Process playlist
+          # Fetch playlist data
           echo "Fetching playlist data"
           PLAYLIST_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
           
           if [ "$(echo $PLAYLIST_DATA | jq '.items | length')" -eq 0 ]; then
-            update_action_status "FAILED" "Playlist not found" "No playlist found with ID: $PLAYLIST_ID"
+            curl -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+              -H "Authorization: Bearer $PORT_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{"status":"FAILED","message":"Playlist not found"}'
             exit 1
           fi
 
-          # Extract playlist info
+          # Process playlist info
           TITLE=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.title')
           DESC=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.description')
           THUMB=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
@@ -112,19 +94,13 @@ jobs:
             }')
 
           echo "Creating playlist entity"
-          PLAYLIST_RESPONSE=$(create_port_entity "playlist" "$PLAYLIST_PAYLOAD")
-          
-          if [ "$(echo $PLAYLIST_RESPONSE | jq -r '.ok // false')" != "true" ]; then
-            update_action_status "FAILED" "Failed to create playlist entity" "$PLAYLIST_RESPONSE"
-            exit 1
-          fi
+          create_port_entity "playlist" "$PLAYLIST_PAYLOAD"
 
           # Initialize counters
           VIDEOS_PROCESSED=0
           VIDEOS_FAILED=0
-          LOGS=""
 
-          # Function to process videos
+          # Process videos function
           process_videos() {
             local PAGE_TOKEN=$1
             local API_URL="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
@@ -135,7 +111,6 @@ jobs:
             local ITEMS_RESPONSE=$(curl -s "${API_URL}")
             echo $ITEMS_RESPONSE | jq -r '.items[].contentDetails.videoId' | while read -r VIDEO_ID; do
               echo "Processing video: ${VIDEO_ID}"
-              LOGS="${LOGS}\nProcessing video: ${VIDEO_ID}"
               
               VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
               
@@ -175,25 +150,22 @@ jobs:
                     }
                   }')
 
-                VIDEO_RESPONSE=$(create_port_entity "video" "$VIDEO_PAYLOAD")
-                
-                if [ "$(echo $VIDEO_RESPONSE | jq -r '.ok // false')" = "true" ]; then
+                if create_port_entity "video" "$VIDEO_PAYLOAD"; then
                   ((VIDEOS_PROCESSED++))
-                  LOGS="${LOGS}\nSuccessfully created video entity for ${VIDEO_ID}"
                 else
                   ((VIDEOS_FAILED++))
-                  LOGS="${LOGS}\nFailed to create video entity for ${VIDEO_ID}"
                 fi
 
-                # Update progress every 5 videos
                 if [ $((VIDEOS_PROCESSED % 5)) -eq 0 ]; then
-                  update_action_status "RUNNING" "Processed ${VIDEOS_PROCESSED} videos, ${VIDEOS_FAILED} failed" "$LOGS"
+                  curl -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+                    -H "Authorization: Bearer $PORT_TOKEN" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"status\":\"RUNNING\",\"message\":\"Processed ${VIDEOS_PROCESSED} videos\"}"
                 fi
 
                 sleep 1
               else
                 ((VIDEOS_FAILED++))
-                LOGS="${LOGS}\nNo data found for video ${VIDEO_ID}"
               fi
             done
 
@@ -207,26 +179,28 @@ jobs:
           process_videos ""
 
           # Update final status
-          if [ $VIDEOS_PROCESSED -gt 0 ]; then
-            update_action_status "SUCCESS" "Processed ${VIDEOS_PROCESSED} videos successfully, ${VIDEOS_FAILED} failed" "$LOGS"
-          else
-            update_action_status "FAILED" "No videos were processed successfully" "$LOGS"
-            exit 1
-          fi
+          curl -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+            -H "Authorization: Bearer $PORT_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\":\"SUCCESS\",\"message\":\"Completed: ${VIDEOS_PROCESSED} videos processed, ${VIDEOS_FAILED} failed\"}"
 
       - name: Report Failure
         if: failure()
         env:
-          PORT_TOKEN: ${{ needs.get-port-token.outputs.token }}
           PORT_CONTEXT: ${{ inputs.port_context }}
         run: |
+          # Get fresh token for failure reporting
+          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"clientId\": \"${{ secrets.PORT_CLIENT_ID }}\",
+              \"clientSecret\": \"${{ secrets.PORT_CLIENT_SECRET }}\"
+            }")
+          
+          PORT_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
           
-          curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+          curl -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
             -H "Authorization: Bearer $PORT_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{
-              "status": "FAILED",
-              "message": "Workflow failed to complete",
-              "logs": "Check GitHub Actions logs for details"
-            }'
+            -d '{"status":"FAILED","message":"Workflow failed to complete"}'
