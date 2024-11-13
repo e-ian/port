@@ -12,160 +12,27 @@ real-time performance updates, and automated daily data updates, giving you the 
 ## Prerequisites
 
 Before starting this integration, ensure you have:
-
-1. **Port Account**
-   - Sign up at [app.getport.io](https://app.getport.io)
-   - Verify your email and log in
-
-   **Installing Port's GitHub App**
+   - Sign up at [app.getport.io](https://app.getport.io) and verify your email
    - Log into your Port account at [app.getport.io](https://app.getport.io)
-   - Navigate to "Data Sources" in the left sidebar
-   - Find and click on "GitHub" under the available integrations
-   - Click "Install GitHub App"
-   - You will be redirected to GitHub's app installation page
-   - Choose whether to install the app on all repositories or select specific ones
-   - If selecting specific repositories:
-     - Choose the repositories you want to monitor
-     - Click "Install & Authorize"
-   - Return to Port's "Data Sources" page
-   - Check that GitHub appears as a connected integration
-   - The status should show as "Active"
+   - Install Port's Github app by clicking [here](https://github.com/apps/getport-io/installations/new)
+   - Obtain a YouTube Data API v3 key via the [Google Cloud Console](https://console.cloud.google.com)
+   - Prepare your Port organization's Client ID and Client Secret. To find you Port credentials, click [here](https://docs.getport.io/build-your-software-catalog/custom-integration/api/#find-your-port-credentials).
 
-
-2. **GitHub Account**
-   - Active GitHub account
-   - Repository where you'll set up the workflow
-
-3. **API Keys and Credentials**
-   - YouTube Data API v3 key
-     - Go to [Google Cloud Console](https://console.cloud.google.com)
-     - Create a project or select existing one
-     - Enable YouTube Data API v3
-     - Create API credentials
-   - Port API key
-   - Port Client ID and Secret
-
-## Part 1: Data Modeling in Port
+## Data Modeling in Port
 
 ### Creating the Playlist Blueprint
-
-1. **Navigate to Builder**
    - Log into Port
    - Click "Builder" in the left sidebar
    - Click "+ New Blueprint"
+   - In the model that pops up, click on "{---} Edit JSON"
+   - Copy and paste the json config below to have for the blueprint properties
 
-2. **Configure Basic Settings**
-   - Name: "playlist"
-   - Display Name: "Playlist"
-   - Description: "YouTube playlist description"
-   - Icon: Select "Microservice" from the dropdown
 
-3. **Add Properties**
-   - Click "Add Property"
-   - Add the following properties:
+<details>
+<summary>Click to expand Playlist Blueprint JSON</summary>
 
-   a) Title Property
-   - Name: "title"
-   - Type: "String"
-   - Required: Yes
-   - Description: "Title of the playlist"
-   
-   b) Description Property
-   - Name: "description"
-   - Type: "String"
-   - Required: No
-   - Description: "The description of the playlist"
-   
-   c) Thumbnail URL Property
-   - Name: "thumbnail_url"
-   - Type: "String"
-   - Format: "URL"
-   - Required: No
-   - Description: "The URL of the playlist's thumbnail image"
-   
-   d) Video Count Property
-   - Name: "video_count"
-   - Type: "Number"
-   - Required: No
-   - Description: "The number of videos in the playlist"
-
-4. **Save Blueprint**
-   - Click "Create" at the bottom of the page
-   - Verify the blueprint appears in your blueprint list
-
-### Creating the Video Blueprint
-
-1. **Start New Blueprint**
-   - Click "+ New Blueprint"
-   - Name: "video"
-   - Display Name: "Video"
-   - Description: "YouTube video blueprint"
-   - Icon: Select "Microservice"
-
-2. **Add Properties**
-   - Add the following properties:
-
-   a) Title Property
-   - Name: "title"
-   - Type: "String"
-   - Required: Yes
-   - Description: "The title of the video"
-   
-   b) Description Property
-   - Name: "description"
-   - Type: "String"
-   - Required: No
-   - Description: "The description of the video"
-   
-   c) Thumbnail URL Property
-   - Name: "thumbnail_url"
-   - Type: "String"
-   - Format: "URL"
-   - Required: No
-   - Description: "The URL of the video's thumbnail image"
-   
-   d) Duration Property
-   - Name: "duration"
-   - Type: "String"
-   - Required: No
-   - Description: "The duration of the video"
-   
-   e) View Count Property
-   - Name: "view_count"
-   - Type: "Number"
-   - Required: No
-   - Description: "The number of views the video has received"
-   
-   f) Like Count Property
-   - Name: "like_count"
-   - Type: "Number"
-   - Required: No
-   - Description: "The number of likes the video has received"
-   
-   g) Comment Count Property
-   - Name: "comment_count"
-   - Type: "Number"
-   - Required: No
-   - Description: "The number of comments the video has received"
-
-3. **Add Relation**
-   - Click "Add Relation"
-   - Name: "belongs_to"
-   - Title: "Belongs To"
-   - Description: "Relationship between video and playlist"
-   - Target Blueprint: Select "playlist"
-   - Required: Yes
-   - Many: No
-
-4. **Save Blueprint**
-   - Click "Create"
-   - Verify the blueprint appears with all properties and relations
-
-### Blueprint YAML Representations
-
-When creating the blueprints in Port, you can also use these YAML definitions:
-
-#### Playlist Blueprint YAML
+<div class="code-container">
+<button class="copy-button" onclick="copyCode(this)">Copy</button>
 
 ```json
 {
@@ -206,7 +73,60 @@ When creating the blueprints in Port, you can also use these YAML definitions:
 }
 ```
 
-#### Video Blueprint YAML
+</div>
+
+  <style>
+  .code-container {
+    position: relative;
+  }
+
+  .copy-button {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    padding: 5px 10px;
+    background-color: #f1f1f1;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+
+  .copy-button:hover {
+    background-color: #e1e1e1;
+  }
+  </style>
+
+  <script>
+  function copyCode(button) {
+    const codeBlock = button.nextElementSibling;
+    const code = codeBlock.innerText;
+    
+    navigator.clipboard.writeText(code).then(() => {
+      const originalText = button.innerText;
+      button.innerText = 'Copied!';
+      setTimeout(() => {
+        button.innerText = originalText;
+      }, 2000);
+    }).catch(err => {
+      console.error('Failed to copy:', err);
+    });
+  }
+  </script>
+
+</details>
+
+### Creating the Video Blueprint
+   - Click "Builder" in the left sidebar
+   - Click "+ New Blueprint"
+   - In the model that pops up, click on "{---} Edit JSON"
+   - Copy and paste the json config below to have for the blueprint properties
+
+<details>
+<summary>Click to expand Video Blueprint JSON</summary>
+
+<div class="code-container">
+<button class="copy-button" onclick="copyCode(this)">Copy</button>
+
 ```json
 {
   "identifier": "video",
@@ -269,18 +189,149 @@ When creating the blueprints in Port, you can also use these YAML definitions:
 }
 ```
 
-## Part 2: GitHub Workflow Setup
+</div>
 
-### Setting Up Repository Secrets
+  <style>
+  .code-container {
+    position: relative;
+  }
 
-1. **Navigate to Repository Settings**
-   - Go to your GitHub repository
-   - Click "Settings"
-   - Click "Secrets and variables" in the left sidebar
-   - Select "Actions"
+  .copy-button {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    padding: 5px 10px;
+    background-color: #f1f1f1;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    cursor: pointer;
+  }
 
-2. **Add Required Secrets**
-   - Click "New repository secret"
+  .copy-button:hover {
+    background-color: #e1e1e1;
+  }
+  </style>
+
+  <script>
+  function copyCode(button) {
+    const codeBlock = button.nextElementSibling;
+    const code = codeBlock.innerText;
+    
+    navigator.clipboard.writeText(code).then(() => {
+      const originalText = button.innerText;
+      button.innerText = 'Copied!';
+      setTimeout(() => {
+        button.innerText = originalText;
+      }, 2000);
+    }).catch(err => {
+      console.error('Failed to copy:', err);
+    });
+  }
+  </script>
+
+</details>
+
+## Self service setup
+  - Navigate to Self-service in Port by clicking [here](https://app.getport.io/self-serve)
+  - Click on the "+ Action" button to create and new action. Click on "{---} Edit JSON" in the pop up
+  - Copy and paste the json configuration details below to setup the Self-Service. Edit with your details.
+
+  <details>
+  <summary>Click to expand Self-service config JSON</summary>
+
+  <div class="code-container">
+  <button class="copy-button" onclick="copyCode(this)">Copy</button>
+
+  ```json
+  {
+  "identifier": "youtube",
+  "title": "youtube",
+  "icon": "Github",
+  "description": "Self service action to trigger an action that fetches a youtube playlist",
+  "trigger": {
+    "type": "self-service",
+    "operation": "CREATE",
+    "userInputs": {
+      "properties": {
+        "playlist_id": {
+          "icon": "Youtrack",
+          "type": "string",
+          "title": "playlist_id",
+          "description": "Playlist id to be used for fetching the different respective videos"
+        }
+      },
+      "required": [
+        "playlist_id"
+      ],
+      "order": [
+        "playlist_id"
+      ]
+    },
+    "blueprintIdentifier": "playlist"
+  },
+  "invocationMethod": {
+    "type": "GITHUB",
+    "org": "<YOUR_ORGANISATION_NAME>",
+    "repo": "<YOUR_REPO_NAME>",
+    "workflow": "<SPECIFY_WORKFLOW_FILE>",
+    "workflowInputs": {
+      "{{ spreadValue() }}": "{{ .inputs }}",
+      "port_context": {
+        "runId": "{{ .run.id }}",
+        "blueprint": "{{ .action.blueprint }}"
+      }
+    },
+    "reportWorkflowStatus": true
+  },
+  "requiredApproval": false
+}
+
+  ```
+
+  </div>
+
+  <style>
+  .code-container {
+    position: relative;
+  }
+
+  .copy-button {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    padding: 5px 10px;
+    background-color: #f1f1f1;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+
+  .copy-button:hover {
+    background-color: #e1e1e1;
+  }
+  </style>
+
+  <script>
+  function copyCode(button) {
+    const codeBlock = button.nextElementSibling;
+    const code = codeBlock.innerText;
+    
+    navigator.clipboard.writeText(code).then(() => {
+      const originalText = button.innerText;
+      button.innerText = 'Copied!';
+      setTimeout(() => {
+        button.innerText = originalText;
+      }, 2000);
+    }).catch(err => {
+      console.error('Failed to copy:', err);
+    });
+  }
+  </script>
+
+  </details>
+
+## GitHub Workflow Setup
+   - Go to your GitHub repository settings
    - Add each of these secrets:
      ```
      YOUTUBE_API_KEY (Your YouTube Data API key)
@@ -289,16 +340,14 @@ When creating the blueprints in Port, you can also use these YAML definitions:
      PORT_CLIENT_SECRET (Your Port Client Secret)
      ```
 
-### Creating the Workflow File
-
-1. **Create Workflow Directory**
-   - In your repository, create directory: `.github/workflows`
-
-2. **Create Workflow File**
-   - Create new file: `ingest.yml`
+#### Creating the Workflow File
+   - Create new file: `ingest.yml` in the directory `.github/workflows`
    - Add the following GitHub Actions workflow configuration:
 
-```yaml
+<details>
+<summary>Click to expand GitHub Workflow YAML 📋</summary>
+
+```yaml copy
 name: Ingest YouTube Playlist
 
 on:
@@ -451,8 +500,20 @@ jobs:
           process_videos ""
 ```
 
+</details>
 
-## Part 4: Creating Visualizations
+## Example self-service action
+- On the Self-service tab, navigate to the self-service you created and click on "Create".
+- The pop-up below will be shown, enter the value of the youtube `playlist_id` and click execute
+<details>
+<summary>Click to see example Self-Service Execution 🖼️</summary>
+<img src="./assets/execute.png" alt="Self-Service Execution">
+</details>
+- This will trigger the workflow and you can track the progress from your port account.
+- When completed, go to catalogue to view the playlist and videos respectively.
+
+
+## Creating Visualizations
 
 After the data is ingested, create these visualizations to monitor your YouTube content:
 
@@ -499,4 +560,7 @@ After the data is ingested, create these visualizations to monitor your YouTube 
 
 ### YouTube Playlist Analytics Dashboard Layout
 
-![YouTube Analytics Dashboard](./assets/youtube_analytics_dashboard.png)
+<details>
+<summary>Click to see example YouTube Analytics Dashboard 🖼️</summary>
+<img src="./assets/youtube_analytics_dashboard.png" alt="YouTube Analytics Dashboard">
+</details>
