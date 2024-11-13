@@ -31,6 +31,7 @@ jobs:
               \"clientSecret\": \"${PORT_CLIENT_SECRET}\"
             }")
           
+          # Extract token and verify it exists
           ACCESS_TOKEN=$(echo $TOKEN_RESPONSE | jq -r '.accessToken')
           if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
             echo "Failed to get access token"
@@ -38,16 +39,30 @@ jobs:
             exit 1
           fi
 
+          # Verify token format
+          if [[ ! $ACCESS_TOKEN =~ ^[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$ ]]; then
+            echo "Token appears to be malformed"
+            exit 1
+          fi
+
           # Mask token in logs
           echo "::add-mask::$ACCESS_TOKEN"
           
-          # Store token with proper escaping
-          echo "token=${ACCESS_TOKEN}" >> "$GITHUB_OUTPUT"
+          # Export token without any wrapping quotes
+          echo "token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
 
   ingest-data:
     needs: get-port-token
     runs-on: ubuntu-latest
     steps:
+      - name: Debug Token
+        env:
+          PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
+        run: |
+          # Debug token format (masked)
+          echo "Token length: ${#PORT_TOKEN}"
+          echo "First 10 chars type: $(echo "${PORT_TOKEN:0:10}" | xxd -p)"
+
       - name: Process Playlist and Videos
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
@@ -55,6 +70,30 @@ jobs:
           PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
           PORT_CONTEXT: ${{ inputs.port_context }}
         run: |
+          # Verify token with detailed error reporting
+          echo "Verifying Port token..."
+          TEST_RESPONSE=$(curl -v -H "Authorization: Bearer ${PORT_TOKEN}" https://api.getport.io/v1/blueprints 2>&1)
+          if ! echo "$TEST_RESPONSE" | grep -q '"ok":true'; then
+            echo "Token verification failed"
+            echo "Response: $TEST_RESPONSE"
+            echo "Token debug info:"
+            echo "Token length: ${#PORT_TOKEN}"
+            echo "Token prefix: ${PORT_TOKEN:0:10}..."
+            
+            # Update Port action status about token failure
+            RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
+            curl -X PATCH "https://api.getport.io/v1/actions/runs/${RUN_ID}" \
+              -H "Authorization: Bearer ${PORT_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "status": "FAILED",
+                "message": "Port token verification failed",
+                "logs": "Token verification failed. Please check Port credentials and token format."
+              }'
+            exit 1
+          fi
+          echo "Token verified successfully"
+
           # Function to update Port action status
           update_port_status() {
             local STATUS=$1
@@ -76,17 +115,6 @@ jobs:
                 \"logs\": ${ESCAPED_LOGS}
               }"
           }
-
-          # Verify token with error handling
-          echo "Verifying Port token..."
-          TEST_RESPONSE=$(curl -s -H "Authorization: Bearer ${PORT_TOKEN}" https://api.getport.io/v1/blueprints)
-          if [ "$(echo $TEST_RESPONSE | jq -r '.ok // false')" != "true" ]; then
-            echo "Token verification failed"
-            echo "Response: $TEST_RESPONSE"
-            update_port_status "FAILED" "Port token verification failed" "Token verification failed. Please check your Port credentials."
-            exit 1
-          fi
-          echo "Token verified successfully"
 
           # Initialize logs variable
           LOGS=""
@@ -127,7 +155,7 @@ jobs:
             exit 1
           fi
 
-          # Process playlist with error handling
+          # Process playlist
           TITLE=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.title')
           DESC=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.description')
           THUMB=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
@@ -160,7 +188,7 @@ jobs:
           VIDEOS_PROCESSED=0
           VIDEOS_FAILED=0
 
-          # Process videos with improved error handling
+          # Process videos
           process_videos() {
             local PAGE_TOKEN=$1
             local API_URL="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
@@ -254,7 +282,6 @@ jobs:
           PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
           PORT_CONTEXT: ${{ inputs.port_context }}
         run: |
-          # Parse port context safely
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
           
           curl -X PATCH "https://api.getport.io/v1/actions/runs/${RUN_ID}" \
