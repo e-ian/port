@@ -85,7 +85,6 @@ jobs:
             exit 1
           fi
 
-          # Save outputs
           echo "title=$(echo "$TITLE" | jq -R -s .)" >> $GITHUB_OUTPUT
           echo "count=$COUNT" >> $GITHUB_OUTPUT
 
@@ -126,176 +125,144 @@ jobs:
             exit 1
           fi
 
-          # Function to create video entity with error handling
-          create_video_entity() {
-            local PAYLOAD=$1
-            local RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/blueprints/video/entities" \
+          # Initialize counters in a temp file for persistence across subshells
+          echo "0" > /tmp/videos_processed
+          echo "0" > /tmp/videos_failed
+
+          # Function to create video entity
+          create_port_entity() {
+            local BLUEPRINT=$1
+            local PAYLOAD=$2
+            curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "$PAYLOAD")
-            
-            if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" != "true" ]; then
-              echo "Failed to create video entity: $RESPONSE"
-              return 1
-            fi
-            echo "$RESPONSE"
-            return 0
+              -d "$PAYLOAD"
           }
 
-          # Function to update status with proper message format
+          # Function to update status
           update_action_status() {
             local STATUS=$1
-            local SUMMARY=$2
-            local DETAILS=$3
+            local COUNT=$2
+            local FAILED=$3
             
-            local STATUS_PAYLOAD=$(jq -n \
-              --arg status "$STATUS" \
-              --arg summary "$SUMMARY" \
-              --arg details "$DETAILS" \
-              '{
-                status: $status,
-                message: {
-                  summary: $summary,
-                  details: $details
-                }
-              }')
-
-            local RESPONSE=$(curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+            curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "$STATUS_PAYLOAD")
-            
-            if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" != "true" ]; then
-              echo "Failed to update status: $RESPONSE"
-              return 1
-            fi
-            return 0
+              -d "{
+                \"status\": \"SUCCESS\",
+                \"message\": {
+                  \"summary\": \"Processing videos\",
+                  \"details\": \"Processed ${COUNT} videos, ${FAILED} failed\"
+                }
+              }"
           }
 
-          # Function to fetch video IDs
-          fetch_video_ids() {
+          # Function to process videos
+          process_videos() {
             local PAGE_TOKEN=$1
-            local ITEMS_URL="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
-            if [ -n "$PAGE_TOKEN" ]; then
-              ITEMS_URL="${ITEMS_URL}&pageToken=${PAGE_TOKEN}"
+            local API_URL="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
+            if [ -n "${PAGE_TOKEN}" ]; then
+              API_URL="${API_URL}&pageToken=${PAGE_TOKEN}"
             fi
+
+            local ITEMS_RESPONSE=$(curl -s "${API_URL}")
             
-            local RESPONSE=$(curl -s "$ITEMS_URL")
-            echo "$RESPONSE"
+            echo "$ITEMS_RESPONSE" | jq -r '.items[].contentDetails.videoId' | while read -r VIDEO_ID; do
+              echo "Processing video: ${VIDEO_ID}"
+              
+              VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
+              
+              if [ "$(echo "$VIDEO_DATA" | jq '.items | length')" -gt 0 ]; then
+                local V_TITLE=$(echo "$VIDEO_DATA" | jq -r '.items[0].snippet.title')
+                local V_DESC=$(echo "$VIDEO_DATA" | jq -r '.items[0].snippet.description')
+                local V_THUMB=$(echo "$VIDEO_DATA" | jq -r '.items[0].snippet.thumbnails.default.url')
+                local V_DURATION=$(echo "$VIDEO_DATA" | jq -r '.items[0].contentDetails.duration')
+                local V_VIEWS=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.viewCount // "0"')
+                local V_LIKES=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.likeCount // "0"')
+                local V_COMMENTS=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.commentCount // "0"')
+
+                VIDEO_PAYLOAD=$(jq -n \
+                  --arg id "$VIDEO_ID" \
+                  --arg title "$V_TITLE" \
+                  --arg desc "$V_DESC" \
+                  --arg thumb "$V_THUMB" \
+                  --arg duration "$V_DURATION" \
+                  --arg views "$V_VIEWS" \
+                  --arg likes "$V_LIKES" \
+                  --arg comments "$V_COMMENTS" \
+                  --arg playlist_id "$PLAYLIST_ID" \
+                  '{
+                    identifier: $id,
+                    title: $title,
+                    properties: {
+                      title: $title,
+                      description: $desc,
+                      thumbnail_url: $thumb,
+                      duration: $duration,
+                      view_count: ($views|tonumber),
+                      like_count: ($likes|tonumber),
+                      comment_count: ($comments|tonumber)
+                    },
+                    relations: {
+                      belongs_to: $playlist_id
+                    }
+                  }')
+
+                RESPONSE=$(create_port_entity "video" "$VIDEO_PAYLOAD")
+                if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" = "true" ]; then
+                  CURRENT=$(cat /tmp/videos_processed)
+                  echo $((CURRENT + 1)) > /tmp/videos_processed
+                  echo "Successfully processed video: $VIDEO_ID"
+                else
+                  CURRENT=$(cat /tmp/videos_failed)
+                  echo $((CURRENT + 1)) > /tmp/videos_failed
+                  echo "Failed to process video: $VIDEO_ID"
+                fi
+
+                # Update status every 5 videos
+                PROCESSED=$(cat /tmp/videos_processed)
+                FAILED=$(cat /tmp/videos_failed)
+                if [ $((PROCESSED % 5)) -eq 0 ]; then
+                  update_action_status "SUCCESS" "$PROCESSED" "$FAILED" || true
+                fi
+
+                sleep 1
+              else
+                CURRENT=$(cat /tmp/videos_failed)
+                echo $((CURRENT + 1)) > /tmp/videos_failed
+                echo "No data found for video: $VIDEO_ID"
+              fi
+            done
+
+            # Check for next page
+            NEXT_PAGE=$(echo "$ITEMS_RESPONSE" | jq -r '.nextPageToken // empty')
+            if [ -n "$NEXT_PAGE" ]; then
+              process_videos "$NEXT_PAGE"
+            fi
           }
 
-          # Initialize counters
-          VIDEOS_PROCESSED=0
-          VIDEOS_FAILED=0
-
-          # Initial status update
-          update_action_status "SUCCESS" "Starting video processing" "Initializing video import process"
-
-          # Process videos
-          echo "Starting video processing..."
-          
-          # Get all video IDs
-          VIDEO_IDS=()
-          NEXT_PAGE_TOKEN=""
-          
-          while true; do
-            ITEMS_RESPONSE=$(fetch_video_ids "$NEXT_PAGE_TOKEN")
-            
-            # Add video IDs to array
-            while read -r id; do
-              if [ -n "$id" ]; then
-                VIDEO_IDS+=("$id")
-              fi
-            done < <(echo "$ITEMS_RESPONSE" | jq -r '.items[].contentDetails.videoId')
-            
-            NEXT_PAGE_TOKEN=$(echo "$ITEMS_RESPONSE" | jq -r '.nextPageToken // empty')
-            if [ -z "$NEXT_PAGE_TOKEN" ]; then
-              break
-            fi
-          done
-
-          # Check if we found any videos
-          if [ ${#VIDEO_IDS[@]} -eq 0 ]; then
-            echo "No videos found in playlist"
-            update_action_status "SUCCESS" "No videos found" "Playlist contains no videos"
-            exit 1
-          fi
-
-          echo "Found ${#VIDEO_IDS[@]} videos in playlist"
-
-          # Process each video
-          for VIDEO_ID in "${VIDEO_IDS[@]}"; do
-            echo "Processing video: ${VIDEO_ID}"
-            
-            VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
-            
-            if [ "$(echo "$VIDEO_DATA" | jq '.items | length')" -gt 0 ]; then
-              V_TITLE=$(echo "$VIDEO_DATA" | jq -r '.items[0].snippet.title')
-              V_DESC=$(echo "$VIDEO_DATA" | jq -r '.items[0].snippet.description')
-              V_THUMB=$(echo "$VIDEO_DATA" | jq -r '.items[0].snippet.thumbnails.default.url')
-              V_DURATION=$(echo "$VIDEO_DATA" | jq -r '.items[0].contentDetails.duration')
-              V_VIEWS=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.viewCount // "0"')
-              V_LIKES=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.likeCount // "0"')
-              V_COMMENTS=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.commentCount // "0"')
-
-              VIDEO_PAYLOAD=$(jq -n \
-                --arg id "$VIDEO_ID" \
-                --arg title "$V_TITLE" \
-                --arg desc "$V_DESC" \
-                --arg thumb "$V_THUMB" \
-                --arg duration "$V_DURATION" \
-                --arg views "$V_VIEWS" \
-                --arg likes "$V_LIKES" \
-                --arg comments "$V_COMMENTS" \
-                --arg playlist_id "$PLAYLIST_ID" \
-                '{
-                  identifier: $id,
-                  title: $title,
-                  properties: {
-                    title: $title,
-                    description: $desc,
-                    thumbnail_url: $thumb,
-                    duration: $duration,
-                    view_count: ($views|tonumber),
-                    like_count: ($likes|tonumber),
-                    comment_count: ($comments|tonumber)
-                  },
-                  relations: {
-                    belongs_to: $playlist_id
-                  }
-                }')
-
-              if create_video_entity "$VIDEO_PAYLOAD"; then
-                ((VIDEOS_PROCESSED++))
-                echo "Successfully processed video: $VIDEO_ID"
-              else
-                ((VIDEOS_FAILED++))
-                echo "Failed to process video: $VIDEO_ID"
-              fi
-
-              if [ $((VIDEOS_PROCESSED % 5)) -eq 0 ]; then
-                PROGRESS_SUMMARY="Processing videos"
-                PROGRESS_DETAILS="Processed ${VIDEOS_PROCESSED} videos, ${VIDEOS_FAILED} failed"
-                update_action_status "SUCCESS" "$PROGRESS_SUMMARY" "$PROGRESS_DETAILS" || true
-              fi
-
-              sleep 1
-            else
-              ((VIDEOS_FAILED++))
-              echo "No data found for video: $VIDEO_ID"
-            fi
-          done
+          # Start processing
+          process_videos ""
 
           # Final status update
-          FINAL_SUMMARY="Processing complete"
-          FINAL_DETAILS="Successfully processed ${VIDEOS_PROCESSED} videos, ${VIDEOS_FAILED} failed"
-          if ! update_action_status "SUCCESS" "$FINAL_SUMMARY" "$FINAL_DETAILS"; then
-            echo "Failed to update final status"
+          PROCESSED=$(cat /tmp/videos_processed)
+          FAILED=$(cat /tmp/videos_failed)
+          
+          if [ "$PROCESSED" -gt 0 ]; then
+            update_action_status "SUCCESS" "$PROCESSED" "$FAILED"
+          else
+            curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "status": "FAILURE",
+                "message": {
+                  "summary": "Processing failed",
+                  "details": "No videos were processed successfully"
+                }
+              }'
             exit 1
           fi
-
-          echo "$FINAL_DETAILS"
-          [ $VIDEOS_PROCESSED -gt 0 ]
 
       - name: Report Failure
         if: failure()
