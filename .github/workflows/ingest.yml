@@ -130,6 +130,41 @@ jobs:
           echo "0" > /tmp/videos_processed
           echo "0" > /tmp/videos_failed
 
+          # Function to add logs to the action run with optional status updates
+          add_action_log() {
+            local MESSAGE=$1
+            local TERMINATION_STATUS=${2:-""}  # Optional parameter for termination status
+            local STATUS_LABEL=${3:-""}        # Optional parameter for status label
+
+            # Check the current status of the action run
+            CURRENT_STATUS=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" | jq -r '.run.status')
+
+            if [ "$CURRENT_STATUS" != "IN_PROGRESS" ]; then
+              echo "::warning::Action run is no longer in progress, skipping log addition"
+              return
+            fi
+
+            # Construct the payload based on provided parameters
+            local PAYLOAD="{\"message\": \"$MESSAGE\""
+            
+            if [ -n "$TERMINATION_STATUS" ]; then
+              PAYLOAD="$PAYLOAD, \"terminationStatus\": \"$TERMINATION_STATUS\""
+            fi
+            
+            if [ -n "$STATUS_LABEL" ]; then
+              PAYLOAD="$PAYLOAD, \"statusLabel\": \"$STATUS_LABEL\""
+            fi
+            
+            PAYLOAD="$PAYLOAD}"
+
+            curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD"
+          }
+
           # Function to update Port action status
           update_action_status() {
             local STATUS=$1
@@ -158,28 +193,6 @@ jobs:
               }"
           }
 
-          # Function to add logs to the action run
-          add_action_log() {
-            local MESSAGE=$1
-
-            # Check the current status of the action run
-            CURRENT_STATUS=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-              -H "Authorization: Bearer $ACCESS_TOKEN" \
-              -H "Content-Type: application/json" | jq -r '.run.status')
-
-            if [ "$CURRENT_STATUS" != "IN_PROGRESS" ]; then
-              echo "::warning::Action run is no longer in progress, skipping log addition"
-              return
-            fi
-
-            curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
-              -H "Authorization: Bearer $ACCESS_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{
-                \"message\": \"$MESSAGE\"
-              }"
-          }
-
           # Function to create video entity
           create_port_entity() {
             local BLUEPRINT=$1
@@ -199,12 +212,13 @@ jobs:
             fi
 
             echo "::group::Fetching videos from playlist..."
+            add_action_log "Fetching videos from playlist..." "" "Fetching Videos"
             local ITEMS_RESPONSE=$(curl -s "${API_URL}")
             echo "::endgroup::"
             
             echo "$ITEMS_RESPONSE" | jq -r '.items[].contentDetails.videoId' | while read -r VIDEO_ID; do
               echo "::group::Processing video: ${VIDEO_ID}"
-              add_action_log "Processing video: $VIDEO_ID"
+              add_action_log "Processing video: $VIDEO_ID" "" "Processing"
               
               VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
               
@@ -218,7 +232,7 @@ jobs:
                 local V_COMMENTS=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.commentCount // "0"')
 
                 echo "::debug::Found video: $V_TITLE"
-                add_action_log "Found video: $V_TITLE"
+                add_action_log "Found video: $V_TITLE" "" "Processing"
 
                 VIDEO_PAYLOAD=$(jq -n \
                   --arg id "$VIDEO_ID" \
@@ -252,19 +266,19 @@ jobs:
                   CURRENT=$(cat /tmp/videos_processed)
                   echo $((CURRENT + 1)) > /tmp/videos_processed
                   echo "::debug::Successfully processed video: $V_TITLE"
-                  add_action_log "Successfully processed video: $V_TITLE"
+                  add_action_log "Successfully processed video: $V_TITLE" "SUCCESS" "Video Processed"
                 else
                   CURRENT=$(cat /tmp/videos_failed)
                   echo $((CURRENT + 1)) > /tmp/videos_failed
                   echo "::error::Failed to process video: $(echo "$RESPONSE" | jq -r '.message')"
-                  add_action_log "Failed to process video: $(echo "$RESPONSE" | jq -r '.message')"
+                  add_action_log "Failed to process video: $(echo "$RESPONSE" | jq -r '.message')" "FAILURE" "Processing Failed"
                 fi
 
                 # Update status every 5 videos
                 PROCESSED=$(cat /tmp/videos_processed)
                 FAILED=$(cat /tmp/videos_failed)
                 if [ $((PROCESSED % 5)) -eq 0 ]; then
-                  update_action_status "SUCCESS" "Processed videos" "Processed ${PROCESSED} videos, ${FAILED} failed"
+                  update_action_status "SUCCESS" "Processing in progress" "Processed ${PROCESSED} videos, ${FAILED} failed"
                 fi
 
                 sleep 1
@@ -272,7 +286,7 @@ jobs:
                 CURRENT=$(cat /tmp/videos_failed)
                 echo $((CURRENT + 1)) > /tmp/videos_failed
                 echo "::error::No data found for video: $VIDEO_ID"
-                add_action_log "No data found for video: $VIDEO_ID"
+                add_action_log "No data found for video: $VIDEO_ID" "FAILURE" "Video Not Found"
               fi
               echo "::endgroup::"
             done
@@ -281,7 +295,7 @@ jobs:
             NEXT_PAGE=$(echo "$ITEMS_RESPONSE" | jq -r '.nextPageToken // empty')
             if [ -n "$NEXT_PAGE" ]; then
               echo "::group::Fetching next page of videos..."
-              add_action_log "Fetching next page of videos..."
+              add_action_log "Fetching next page of videos..." "" "Fetching More"
               process_videos "$NEXT_PAGE"
               echo "::endgroup::"
             fi
@@ -289,7 +303,7 @@ jobs:
 
           # Start processing
           echo "::group::Starting video processing for playlist: $PLAYLIST_TITLE"
-          add_action_log "Starting video processing for playlist: $PLAYLIST_TITLE"
+          add_action_log "Starting video processing for playlist: $PLAYLIST_TITLE" "" "Starting"
           update_action_status "SUCCESS" "Starting video processing" "Processing videos from YouTube playlist"
           
           process_videos ""
@@ -301,7 +315,7 @@ jobs:
           FINAL_SUMMARY="Completed processing"
           FINAL_DETAILS="Processed ${PROCESSED} videos, ${FAILED} failed"
           echo "::group::$FINAL_DETAILS"
-          add_action_log "$FINAL_DETAILS"
+          add_action_log "$FINAL_DETAILS" "SUCCESS" "Completed"
           
           if [ "$PROCESSED" -gt 0 ]; then
             update_action_status "SUCCESS" "$FINAL_SUMMARY" "$FINAL_DETAILS"
@@ -322,10 +336,10 @@ jobs:
           curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"status\": \"FAILURE\",
-              \"message\": {
-                \"summary\": \"Workflow failed\",
-                \"details\": \"Check logs for details\"
+            -d '{
+              "status": "FAILURE",
+              "message": {
+                "summary": "Workflow failed",
+                "details": "Check logs for details"
               }
-            }"
+            }'
