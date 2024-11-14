@@ -14,6 +14,8 @@ on:
 jobs:
   get-port-token:
     runs-on: ubuntu-latest
+    outputs:
+      port_token: ${{ steps.token.outputs.port_token }}
     steps:
       - name: Get Port Token
         id: token
@@ -33,7 +35,7 @@ jobs:
           fi
           
           # Save token as secret
-          echo "PORT_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+          echo "port_token=$ACCESS_TOKEN" >> $GITHUB_ENV
 
   create-playlist:
     needs: get-port-token
@@ -48,6 +50,7 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_CONTEXT: ${{ inputs.port_context }}
+          PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
         run: |
           set -e
           echo "::group::Fetching playlist data"
@@ -104,6 +107,7 @@ jobs:
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_CONTEXT: ${{ inputs.port_context }}
           PLAYLIST_TITLE: ${{ needs.create-playlist.outputs.playlist_title }}
+          PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
         run: |
           set -e
           # Extract run ID
