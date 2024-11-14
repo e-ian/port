@@ -12,11 +12,10 @@ on:
         required: true
 
 jobs:
-  create-playlist:
+  get-port-token:
     runs-on: ubuntu-latest
     outputs:
-      playlist_title: ${{ steps.playlist_info.outputs.title }}
-      playlist_count: ${{ steps.playlist_info.outputs.count }}
+      access_token: ${{ steps.get_token.outputs.access_token }}
     steps:
       - name: Get Port Token
         id: get_token
@@ -34,14 +33,22 @@ jobs:
             echo "::error::Failed to get access token"
             exit 1
           fi
-          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+          echo "access_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
 
+  create-playlist:
+    needs: get-port-token
+    runs-on: ubuntu-latest
+    outputs:
+      playlist_title: ${{ steps.playlist_info.outputs.title }}
+      playlist_count: ${{ steps.playlist_info.outputs.count }}
+    steps:
       - name: Get Playlist Info and Create Port Entity
         id: playlist_info
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_CONTEXT: ${{ inputs.port_context }}
+          ACCESS_TOKEN: ${{ needs.get-port-token.outputs.access_token }}
         run: |
           set -e
           echo "::group::Fetching playlist data"
@@ -88,35 +95,17 @@ jobs:
 
           echo "title=$(echo "$TITLE" | jq -R -s .)" >> $GITHUB_OUTPUT
           echo "count=$COUNT" >> $GITHUB_OUTPUT
-
   process-videos:
-    needs: create-playlist
+    needs: [get-port-token, create-playlist]
     runs-on: ubuntu-latest
     steps:
-      - name: Get Port Token
-        id: get_token
-        env:
-          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
-          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
-        run: |
-          set -e
-          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
-            -H "Content-Type: application/json" \
-            -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
-          
-          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
-          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
-            echo "::error::Failed to get access token"
-            exit 1
-          fi
-          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
-
       - name: Process Videos
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_CONTEXT: ${{ inputs.port_context }}
           PLAYLIST_TITLE: ${{ needs.create-playlist.outputs.playlist_title }}
+          ACCESS_TOKEN: ${{ needs.get-port-token.outputs.access_token }}
         run: |
           set -e
           # Extract run ID
@@ -286,6 +275,7 @@ jobs:
         if: failure()
         env:
           PORT_CONTEXT: ${{ inputs.port_context }}
+          ACCESS_TOKEN: ${{ needs.get-port-token.outputs.access_token }}
         run: |
           set -e
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
