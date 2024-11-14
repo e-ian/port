@@ -345,21 +345,29 @@ This section outlines the data model for managing YouTube content in Port. The m
             echo "0" > /tmp/videos_processed
             echo "0" > /tmp/videos_failed
 
-            # Function to update Port action status
-            update_action_status() {
+            # Function to add logs to the action run
+            add_action_log() {
+              local MESSAGE=$1
+              local STATUS_LABEL=${2:-""}
+
+              # Send log without checking status
+              local PAYLOAD="{\"message\": \"$MESSAGE\""
+              if [ -n "$STATUS_LABEL" ]; then
+                PAYLOAD="$PAYLOAD, \"statusLabel\": \"$STATUS_LABEL\""
+              fi
+              PAYLOAD="$PAYLOAD}"
+
+              curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
+                -H "Authorization: Bearer $ACCESS_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$PAYLOAD"
+            }
+
+            # Function to update final action status only
+            update_final_status() {
               local STATUS=$1
               local SUMMARY=$2
               local DETAILS=$3
-
-              # Check the current status of the action run
-              CURRENT_STATUS=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-                -H "Authorization: Bearer $ACCESS_TOKEN" \
-                -H "Content-Type: application/json" | jq -r '.run.status')
-
-              if [ "$CURRENT_STATUS" != "IN_PROGRESS" ]; then
-                echo "::warning::Action run is no longer in progress, skipping status update"
-                return
-              fi
 
               curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
                 -H "Authorization: Bearer $ACCESS_TOKEN" \
@@ -370,28 +378,6 @@ This section outlines the data model for managing YouTube content in Port. The m
                     \"summary\": \"$SUMMARY\",
                     \"details\": \"$DETAILS\"
                   }
-                }"
-            }
-
-            # Function to add logs to the action run
-            add_action_log() {
-              local MESSAGE=$1
-
-              # Check the current status of the action run
-              CURRENT_STATUS=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-                -H "Authorization: Bearer $ACCESS_TOKEN" \
-                -H "Content-Type: application/json" | jq -r '.run.status')
-
-              if [ "$CURRENT_STATUS" != "IN_PROGRESS" ]; then
-                echo "::warning::Action run is no longer in progress, skipping log addition"
-                return
-              fi
-
-              curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
-                -H "Authorization: Bearer $ACCESS_TOKEN" \
-                -H "Content-Type: application/json" \
-                -d "{
-                  \"message\": \"$MESSAGE\"
                 }"
             }
 
@@ -413,13 +399,11 @@ This section outlines the data model for managing YouTube content in Port. The m
                 API_URL="${API_URL}&pageToken=${PAGE_TOKEN}"
               fi
 
-              echo "::group::Fetching videos from playlist..."
+              add_action_log "Fetching videos from playlist..." "Fetching"
               local ITEMS_RESPONSE=$(curl -s "${API_URL}")
-              echo "::endgroup::"
               
               echo "$ITEMS_RESPONSE" | jq -r '.items[].contentDetails.videoId' | while read -r VIDEO_ID; do
-                echo "::group::Processing video: ${VIDEO_ID}"
-                add_action_log "Processing video: $VIDEO_ID"
+                add_action_log "Processing video: ${VIDEO_ID}" "Processing"
                 
                 VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
                 
@@ -432,8 +416,7 @@ This section outlines the data model for managing YouTube content in Port. The m
                   local V_LIKES=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.likeCount // "0"')
                   local V_COMMENTS=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.commentCount // "0"')
 
-                  echo "::debug::Found video: $V_TITLE"
-                  add_action_log "Found video: $V_TITLE"
+                  add_action_log "Found video: $V_TITLE" "Found"
 
                   VIDEO_PAYLOAD=$(jq -n \
                     --arg id "$VIDEO_ID" \
@@ -466,65 +449,53 @@ This section outlines the data model for managing YouTube content in Port. The m
                   if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" = "true" ]; then
                     CURRENT=$(cat /tmp/videos_processed)
                     echo $((CURRENT + 1)) > /tmp/videos_processed
-                    echo "::debug::Successfully processed video: $V_TITLE"
-                    add_action_log "Successfully processed video: $V_TITLE"
+                    add_action_log "Successfully processed video: $V_TITLE" "Success"
                   else
                     CURRENT=$(cat /tmp/videos_failed)
                     echo $((CURRENT + 1)) > /tmp/videos_failed
-                    echo "::error::Failed to process video: $(echo "$RESPONSE" | jq -r '.message')"
-                    add_action_log "Failed to process video: $(echo "$RESPONSE" | jq -r '.message')"
+                    add_action_log "Failed to process video: $(echo "$RESPONSE" | jq -r '.message')" "Failed"
                   fi
 
-                  # Update status every 5 videos
+                  # Progress update without status change
                   PROCESSED=$(cat /tmp/videos_processed)
                   FAILED=$(cat /tmp/videos_failed)
                   if [ $((PROCESSED % 5)) -eq 0 ]; then
-                    update_action_status "SUCCESS" "Processed videos" "Processed ${PROCESSED} videos, ${FAILED} failed"
+                    add_action_log "Progress: Processed ${PROCESSED} videos, ${FAILED} failed" "Progress"
                   fi
 
                   sleep 1
                 else
                   CURRENT=$(cat /tmp/videos_failed)
                   echo $((CURRENT + 1)) > /tmp/videos_failed
-                  echo "::error::No data found for video: $VIDEO_ID"
-                  add_action_log "No data found for video: $VIDEO_ID"
+                  add_action_log "No data found for video: $VIDEO_ID" "Not Found"
                 fi
-                echo "::endgroup::"
               done
 
               # Check for next page
               NEXT_PAGE=$(echo "$ITEMS_RESPONSE" | jq -r '.nextPageToken // empty')
               if [ -n "$NEXT_PAGE" ]; then
-                echo "::group::Fetching next page of videos..."
-                add_action_log "Fetching next page of videos..."
+                add_action_log "Fetching next page of videos..." "Next Page"
                 process_videos "$NEXT_PAGE"
-                echo "::endgroup::"
               fi
             }
 
             # Start processing
-            echo "::group::Starting video processing for playlist: $PLAYLIST_TITLE"
-            add_action_log "Starting video processing for playlist: $PLAYLIST_TITLE"
-            update_action_status "SUCCESS" "Starting video processing" "Processing videos from YouTube playlist"
-            
+            add_action_log "Starting video processing for playlist: $PLAYLIST_TITLE" "Starting"
             process_videos ""
 
             # Final status update
             PROCESSED=$(cat /tmp/videos_processed)
             FAILED=$(cat /tmp/videos_failed)
             
-            FINAL_SUMMARY="Completed processing"
             FINAL_DETAILS="Processed ${PROCESSED} videos, ${FAILED} failed"
-            echo "::group::$FINAL_DETAILS"
-            add_action_log "$FINAL_DETAILS"
+            add_action_log "$FINAL_DETAILS" "Completed"
             
             if [ "$PROCESSED" -gt 0 ]; then
-              update_action_status "SUCCESS" "$FINAL_SUMMARY" "$FINAL_DETAILS"
+              update_final_status "SUCCESS" "Processing complete" "$FINAL_DETAILS"
             else
-              update_action_status "FAILURE" "No videos were processed successfully" "$FINAL_DETAILS"
+              update_final_status "FAILURE" "No videos processed" "$FINAL_DETAILS"
               exit 1
             fi
-            echo "::endgroup::"
 
         - name: Report Failure
           if: failure()
@@ -537,13 +508,13 @@ This section outlines the data model for managing YouTube content in Port. The m
             curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "{
-                \"status\": \"FAILURE\",
-                \"message\": {
-                  \"summary\": \"Workflow failed\",
-                  \"details\": \"Check logs for details\"
+              -d '{
+                "status": "FAILURE",
+                "message": {
+                  "summary": "Workflow failed",
+                  "details": "Check logs for details"
                 }
-              }"
+              }'
 
   ```
 
