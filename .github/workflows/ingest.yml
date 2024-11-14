@@ -12,13 +12,14 @@ on:
         required: true
 
 jobs:
-  get-port-token:
+  create-playlist:
     runs-on: ubuntu-latest
     outputs:
-      port_token: ${{ steps.token.outputs.port_token }}
+      playlist_title: ${{ steps.playlist_info.outputs.title }}
+      playlist_count: ${{ steps.playlist_info.outputs.count }}
     steps:
       - name: Get Port Token
-        id: token
+        id: get_token
         env:
           PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
           PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
@@ -33,20 +34,7 @@ jobs:
             echo "::error::Failed to get access token"
             exit 1
           fi
-          echo "port_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
-
-  create-playlist:
-    needs: get-port-token
-    runs-on: ubuntu-latest
-    outputs:
-      playlist_title: ${{ steps.playlist_info.outputs.title }}
-      playlist_count: ${{ steps.playlist_info.outputs.count }}
-    steps:
-      - name: Set Port Token
-        env:
-          PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
-        run: |
-          echo "PORT_TOKEN=$PORT_TOKEN" >> $GITHUB_ENV
+          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
       - name: Get Playlist Info and Create Port Entity
         id: playlist_info
@@ -88,7 +76,7 @@ jobs:
 
           echo "::group::Creating playlist entity"
           RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/blueprints/playlist/entities" \
-            -H "Authorization: Bearer $PORT_TOKEN" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d "$PLAYLIST_PAYLOAD")
 
@@ -100,15 +88,28 @@ jobs:
 
           echo "title=$(echo "$TITLE" | jq -R -s .)" >> $GITHUB_OUTPUT
           echo "count=$COUNT" >> $GITHUB_OUTPUT
+
   process-videos:
-    needs: [get-port-token, create-playlist]
+    needs: create-playlist
     runs-on: ubuntu-latest
     steps:
-      - name: Set Port Token
+      - name: Get Port Token
+        id: get_token
         env:
-          PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
+          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
+          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
         run: |
-          echo "PORT_TOKEN=$PORT_TOKEN" >> $GITHUB_ENV
+          set -e
+          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
+          
+          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+            echo "::error::Failed to get access token"
+            exit 1
+          fi
+          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
       - name: Process Videos
         env:
@@ -134,6 +135,7 @@ jobs:
             local MESSAGE=$1
             local STATUS_LABEL=${2:-""}
 
+            # Send log without checking status
             local PAYLOAD="{\"message\": \"$MESSAGE\""
             if [ -n "$STATUS_LABEL" ]; then
               PAYLOAD="$PAYLOAD, \"statusLabel\": \"$STATUS_LABEL\""
@@ -141,7 +143,7 @@ jobs:
             PAYLOAD="$PAYLOAD}"
 
             curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
-              -H "Authorization: Bearer $PORT_TOKEN" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$PAYLOAD"
           }
@@ -153,7 +155,7 @@ jobs:
             local DETAILS=$3
 
             curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-              -H "Authorization: Bearer $PORT_TOKEN" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
               -d "{
                 \"status\": \"$STATUS\",
@@ -169,7 +171,7 @@ jobs:
             local BLUEPRINT=$1
             local PAYLOAD=$2
             curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
-              -H "Authorization: Bearer $PORT_TOKEN" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$PAYLOAD"
           }
@@ -282,12 +284,14 @@ jobs:
 
       - name: Report Failure
         if: failure()
+        env:
+          PORT_CONTEXT: ${{ inputs.port_context }}
         run: |
           set -e
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
           
           curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-            -H "Authorization: Bearer $PORT_TOKEN" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{
               "status": "FAILURE",
@@ -296,5 +300,3 @@ jobs:
                 "details": "Check logs for details"
               }
             }'
-        env:
-          PORT_CONTEXT: ${{ inputs.port_context }}
