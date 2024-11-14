@@ -135,7 +135,17 @@ jobs:
             local STATUS=$1
             local SUMMARY=$2
             local DETAILS=$3
-            
+
+            # Check the current status of the action run
+            CURRENT_STATUS=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" | jq -r '.run.status')
+
+            if [ "$CURRENT_STATUS" != "IN_PROGRESS" ]; then
+              echo "::warning::Action run is no longer in progress, skipping status update"
+              return
+            fi
+
             curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
@@ -151,7 +161,17 @@ jobs:
           # Function to add logs to the action run
           add_action_log() {
             local MESSAGE=$1
-            
+
+            # Check the current status of the action run
+            CURRENT_STATUS=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" | jq -r '.run.status')
+
+            if [ "$CURRENT_STATUS" != "IN_PROGRESS" ]; then
+              echo "::warning::Action run is no longer in progress, skipping log addition"
+              return
+            fi
+
             curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
