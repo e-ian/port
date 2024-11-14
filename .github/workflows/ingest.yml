@@ -31,7 +31,7 @@ jobs:
           
           ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
           if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
-            echo "Failed to get access token"
+            echo "::error::Failed to get access token"
             exit 1
           fi
           echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
@@ -48,7 +48,7 @@ jobs:
           PLAYLIST_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
           
           if [ "$(echo $PLAYLIST_DATA | jq '.items | length')" -eq 0 ]; then
-            echo "No playlist found"
+            echo "::error::No playlist found"
             exit 1
           fi
 
@@ -81,7 +81,7 @@ jobs:
             -d "$PLAYLIST_PAYLOAD")
 
           if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" != "true" ]; then
-            echo "Failed to create playlist entity: $RESPONSE"
+            echo "::error::Failed to create playlist entity: $(echo "$RESPONSE" | jq -r '.message')"
             exit 1
           fi
 
@@ -105,10 +105,11 @@ jobs:
           
           ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
           if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
-            echo "Failed to get access token"
+            echo "::error::Failed to get access token"
             exit 1
           fi
           echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+
       - name: Process Videos
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
@@ -120,7 +121,7 @@ jobs:
           # Extract run ID
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
           if [ -z "$RUN_ID" ]; then
-            echo "Failed to get run ID from context"
+            echo "::error::Failed to get run ID from context"
             exit 1
           fi
 
@@ -128,25 +129,11 @@ jobs:
           echo "0" > /tmp/videos_processed
           echo "0" > /tmp/videos_failed
 
-          # Initialize logs storage
-          LOGS_FILE="/tmp/action_logs.txt"
-          echo "" > "$LOGS_FILE"
-
-          # Function to append to logs and update Port
-          append_log() {
-            local LOG_TEXT="$1"
-            echo "$LOG_TEXT" >> "$LOGS_FILE"
-            echo "$LOG_TEXT"
-          }
-
-          # Function to update Port action status with logs
+          # Function to update Port action status
           update_action_status() {
             local STATUS=$1
             local SUMMARY=$2
-            local ACCUMULATED_LOGS=$(cat "$LOGS_FILE")
-            
-            # Escape logs for JSON
-            local ESCAPED_LOGS=$(echo "$ACCUMULATED_LOGS" | jq -R -s .)
+            local DETAILS=$3
             
             curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
@@ -155,9 +142,8 @@ jobs:
                 \"status\": \"$STATUS\",
                 \"message\": {
                   \"summary\": \"$SUMMARY\",
-                  \"details\": \"$SUMMARY\"
-                },
-                \"logs\": $ESCAPED_LOGS
+                  \"details\": \"$DETAILS\"
+                }
               }"
           }
 
@@ -179,11 +165,12 @@ jobs:
               API_URL="${API_URL}&pageToken=${PAGE_TOKEN}"
             fi
 
-            append_log "Fetching videos from playlist..."
+            echo "::group::Fetching videos from playlist..."
             local ITEMS_RESPONSE=$(curl -s "${API_URL}")
+            echo "::endgroup::"
             
             echo "$ITEMS_RESPONSE" | jq -r '.items[].contentDetails.videoId' | while read -r VIDEO_ID; do
-              append_log "Processing video: ${VIDEO_ID}"
+              echo "::group::Processing video: ${VIDEO_ID}"
               
               VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
               
@@ -196,7 +183,7 @@ jobs:
                 local V_LIKES=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.likeCount // "0"')
                 local V_COMMENTS=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.commentCount // "0"')
 
-                append_log "Found video: $V_TITLE"
+                echo "::debug::Found video: $V_TITLE"
 
                 VIDEO_PAYLOAD=$(jq -n \
                   --arg id "$VIDEO_ID" \
@@ -229,39 +216,41 @@ jobs:
                 if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" = "true" ]; then
                   CURRENT=$(cat /tmp/videos_processed)
                   echo $((CURRENT + 1)) > /tmp/videos_processed
-                  append_log "Successfully processed video: $V_TITLE"
+                  echo "::debug::Successfully processed video: $V_TITLE"
                 else
                   CURRENT=$(cat /tmp/videos_failed)
                   echo $((CURRENT + 1)) > /tmp/videos_failed
-                  append_log "Failed to process video: $V_TITLE"
+                  echo "::error::Failed to process video: $(echo "$RESPONSE" | jq -r '.message')"
                 fi
 
                 # Update status every 5 videos
                 PROCESSED=$(cat /tmp/videos_processed)
                 FAILED=$(cat /tmp/videos_failed)
                 if [ $((PROCESSED % 5)) -eq 0 ]; then
-                  update_action_status "SUCCESS" "Processed ${PROCESSED} videos, ${FAILED} failed"
+                  update_action_status "SUCCESS" "Processed videos" "Processed ${PROCESSED} videos, ${FAILED} failed"
                 fi
 
                 sleep 1
               else
                 CURRENT=$(cat /tmp/videos_failed)
                 echo $((CURRENT + 1)) > /tmp/videos_failed
-                append_log "No data found for video: $VIDEO_ID"
+                echo "::error::No data found for video: $VIDEO_ID"
               fi
+              echo "::endgroup::"
             done
 
             # Check for next page
             NEXT_PAGE=$(echo "$ITEMS_RESPONSE" | jq -r '.nextPageToken // empty')
             if [ -n "$NEXT_PAGE" ]; then
-              append_log "Fetching next page of videos..."
+              echo "::group::Fetching next page of videos..."
               process_videos "$NEXT_PAGE"
+              echo "::endgroup::"
             fi
           }
 
           # Start processing
-          append_log "Starting video processing for playlist: $PLAYLIST_TITLE"
-          update_action_status "SUCCESS" "Starting video processing"
+          echo "::group::Starting video processing for playlist: $PLAYLIST_TITLE"
+          update_action_status "SUCCESS" "Starting video processing" "Processing videos from YouTube playlist"
           
           process_videos ""
 
@@ -269,16 +258,17 @@ jobs:
           PROCESSED=$(cat /tmp/videos_processed)
           FAILED=$(cat /tmp/videos_failed)
           
-          FINAL_SUMMARY="Completed processing ${PROCESSED} videos, ${FAILED} failed"
-          append_log "Processing complete!"
-          append_log "$FINAL_SUMMARY"
+          FINAL_SUMMARY="Completed processing"
+          FINAL_DETAILS="Processed ${PROCESSED} videos, ${FAILED} failed"
+          echo "::group::$FINAL_DETAILS"
           
           if [ "$PROCESSED" -gt 0 ]; then
-            update_action_status "SUCCESS" "$FINAL_SUMMARY"
+            update_action_status "SUCCESS" "$FINAL_SUMMARY" "$FINAL_DETAILS"
           else
-            update_action_status "FAILURE" "No videos were processed successfully"
+            update_action_status "FAILURE" "No videos were processed successfully" "$FINAL_DETAILS"
             exit 1
           fi
+          echo "::endgroup::"
 
       - name: Report Failure
         if: failure()
@@ -288,15 +278,6 @@ jobs:
           set -e
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
           
-          LOGS_FILE="/tmp/action_logs.txt"
-          ACCUMULATED_LOGS=""
-          if [ -f "$LOGS_FILE" ]; then
-            ACCUMULATED_LOGS=$(cat "$LOGS_FILE")
-          fi
-          
-          # Escape logs for JSON
-          ESCAPED_LOGS=$(echo "$ACCUMULATED_LOGS" | jq -R -s .)
-          
           curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
@@ -305,6 +286,5 @@ jobs:
               \"message\": {
                 \"summary\": \"Workflow failed\",
                 \"details\": \"Check logs for details\"
-              },
-              \"logs\": $ESCAPED_LOGS
+              }
             }"
