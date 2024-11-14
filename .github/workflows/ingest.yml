@@ -172,6 +172,18 @@ jobs:
             return 0
           }
 
+          # Function to fetch video IDs
+          fetch_video_ids() {
+            local PAGE_TOKEN=$1
+            local ITEMS_URL="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
+            if [ -n "$PAGE_TOKEN" ]; then
+              ITEMS_URL="${ITEMS_URL}&pageToken=${PAGE_TOKEN}"
+            fi
+            
+            local RESPONSE=$(curl -s "$ITEMS_URL")
+            echo "$RESPONSE"
+          }
+
           # Initialize counters
           VIDEOS_PROCESSED=0
           VIDEOS_FAILED=0
@@ -182,17 +194,12 @@ jobs:
           # Process videos
           echo "Starting video processing..."
           
-          # Get all video IDs first
+          # Get all video IDs
           VIDEO_IDS=()
           NEXT_PAGE_TOKEN=""
           
           while true; do
-            local ITEMS_URL="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
-            if [ -n "$NEXT_PAGE_TOKEN" ]; then
-              ITEMS_URL="${ITEMS_URL}&pageToken=${NEXT_PAGE_TOKEN}"
-            fi
-            
-            local ITEMS_RESPONSE=$(curl -s "$ITEMS_URL")
+            ITEMS_RESPONSE=$(fetch_video_ids "$NEXT_PAGE_TOKEN")
             
             # Add video IDs to array
             while read -r id; do
