@@ -28,13 +28,20 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
           
+          # Debug token response
+          echo "Token Response: $(echo $TOKEN_RESPONSE | jq '.')"
+          
           ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
           if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
             echo "::error::Failed to get access token"
             exit 1
           fi
-          # Properly escape the token for GitHub Actions output
-          echo "access_token=$(echo $ACCESS_TOKEN | jq -Rr '@uri')" >> $GITHUB_OUTPUT
+          
+          # Debug token value
+          echo "Access Token obtained"
+          
+          # Store raw token value
+          echo "access_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
 
   create-playlist:
     needs: get-port-token
@@ -51,8 +58,9 @@ jobs:
           PORT_CONTEXT: ${{ inputs.port_context }}
         run: |
           set -e
-          # Store access token in a variable with proper Bearer prefix
+          # Debug token received from previous job
           ACCESS_TOKEN="${{ needs.get-port-token.outputs.access_token }}"
+          echo "Received token length: ${#ACCESS_TOKEN}"
           
           echo "::group::Fetching playlist data"
           PLAYLIST_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
@@ -85,10 +93,14 @@ jobs:
             }')
 
           echo "::group::Creating playlist entity"
-          RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/blueprints/playlist/entities" \
-            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+          # Debug curl command
+          echo "Sending request with token..."
+          RESPONSE=$(curl -v -X POST "https://api.getport.io/v1/blueprints/playlist/entities" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d "$PLAYLIST_PAYLOAD")
+
+          echo "Response received: $RESPONSE"
 
           if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" != "true" ]; then
             echo "::error::Failed to create playlist entity: $(echo "$RESPONSE" | jq -r '.message')"
@@ -110,8 +122,9 @@ jobs:
           PLAYLIST_TITLE: ${{ needs.create-playlist.outputs.playlist_title }}
         run: |
           set -e
-          # Store access token in a variable with proper Bearer prefix
+          # Debug token received from previous job
           ACCESS_TOKEN="${{ needs.get-port-token.outputs.access_token }}"
+          echo "Video processing job received token length: ${#ACCESS_TOKEN}"
 
           # Extract run ID
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
@@ -124,32 +137,37 @@ jobs:
           echo "0" > /tmp/videos_processed
           echo "0" > /tmp/videos_failed
 
-          # Function to add logs to the action run
+          # Function to add logs to the action run with debug output
           add_action_log() {
             local MESSAGE=$1
             local STATUS_LABEL=${2:-""}
 
-            # Send log without checking status
             local PAYLOAD="{\"message\": \"$MESSAGE\""
             if [ -n "$STATUS_LABEL" ]; then
               PAYLOAD="$PAYLOAD, \"statusLabel\": \"$STATUS_LABEL\""
             fi
             PAYLOAD="$PAYLOAD}"
 
-            curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
-              -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            echo "Sending log with payload: $PAYLOAD"
+            
+            local LOG_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "$PAYLOAD"
+              -d "$PAYLOAD")
+            
+            echo "Log response: $LOG_RESPONSE"
           }
 
-          # Function to update final action status only
+          # Function to update final action status only with debug output
           update_final_status() {
             local STATUS=$1
             local SUMMARY=$2
             local DETAILS=$3
 
-            curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-              -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            echo "Updating final status: $STATUS"
+            
+            local STATUS_RESPONSE=$(curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
               -d "{
                 \"status\": \"$STATUS\",
@@ -157,17 +175,25 @@ jobs:
                   \"summary\": \"$SUMMARY\",
                   \"details\": \"$DETAILS\"
                 }
-              }"
+              }")
+            
+            echo "Status update response: $STATUS_RESPONSE"
           }
 
-          # Function to create video entity
+          # Function to create video entity with debug output
           create_port_entity() {
             local BLUEPRINT=$1
             local PAYLOAD=$2
-            curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
-              -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+            
+            echo "Creating entity for blueprint: $BLUEPRINT"
+            
+            local ENTITY_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "$PAYLOAD"
+              -d "$PAYLOAD")
+            
+            echo "Entity creation response: $ENTITY_RESPONSE"
+            echo "$ENTITY_RESPONSE"
           }
 
           # Function to process videos
@@ -285,8 +311,11 @@ jobs:
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
           ACCESS_TOKEN="${{ needs.get-port-token.outputs.access_token }}"
           
-          curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+          # Debug failure reporting
+          echo "Sending failure status with token length: ${#ACCESS_TOKEN}"
+          
+          FAILURE_RESPONSE=$(curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{
               "status": "FAILURE",
@@ -294,4 +323,6 @@ jobs:
                 "summary": "Workflow failed",
                 "details": "Check logs for details"
               }
-            }'
+            }')
+            
+          echo "Failure report response: $FAILURE_RESPONSE"
