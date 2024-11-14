@@ -223,60 +223,55 @@ This section outlines the data model for managing YouTube content in Port. The m
           required: true
         port_context:
           description: "The port context"
+          type: string
           required: true
 
   jobs:
-    ingest-data:
+    create-playlist:
       runs-on: ubuntu-latest
-      env:
-        YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-        PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
-        PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
-        PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
+      outputs:
+        playlist_title: ${{ steps.playlist_info.outputs.title }}
+        playlist_count: ${{ steps.playlist_info.outputs.count }}
       steps:
-        - name: Process Playlist and Videos
+        - name: Get Port Token
+          id: get_token
+          env:
+            PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
+            PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
           run: |
-            # Get Port access token
-            echo "Getting Port access token"
+            set -e
             TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
               -H "Content-Type: application/json" \
-              -d "{
-                \"clientId\": \"${PORT_CLIENT_ID}\",
-                \"clientSecret\": \"${PORT_CLIENT_SECRET}\"
-              }")
+              -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
             
-            PORT_TOKEN=$(echo $TOKEN_RESPONSE | jq -r '.accessToken')
-            if [ -z "$PORT_TOKEN" ] || [ "$PORT_TOKEN" = "null" ]; then
-              echo "Failed to get access token"
-              echo "Response: $TOKEN_RESPONSE"
+            ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
+            if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+              echo "::error::Failed to get access token"
               exit 1
             fi
-            
-            # Function to create Port entity
-            create_port_entity() {
-              local BLUEPRINT=$1
-              local PAYLOAD=$2
-              curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
-                -H "Authorization: Bearer ${PORT_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d "$PAYLOAD"
-            }
+            echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
-            echo "Fetching playlist data"
+        - name: Get Playlist Info and Create Port Entity
+          id: playlist_info
+          env:
+            YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+            PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
+            PORT_CONTEXT: ${{ inputs.port_context }}
+          run: |
+            set -e
+            echo "::group::Fetching playlist data"
             PLAYLIST_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
             
             if [ "$(echo $PLAYLIST_DATA | jq '.items | length')" -eq 0 ]; then
-              echo "Error: No playlist found"
+              echo "::error::No playlist found"
               exit 1
             fi
 
-            # Process playlist
             TITLE=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.title')
             DESC=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.description')
             THUMB=$(echo $PLAYLIST_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
             COUNT=$(echo $PLAYLIST_DATA | jq -r '.items[0].contentDetails.itemCount')
 
-            # Create sanitized JSON for playlist
             PLAYLIST_PAYLOAD=$(jq -n \
               --arg id "$PLAYLIST_ID" \
               --arg title "$TITLE" \
@@ -294,11 +289,123 @@ This section outlines the data model for managing YouTube content in Port. The m
                 }
               }')
 
-            echo "Creating playlist entity"
-            PLAYLIST_RESPONSE=$(create_port_entity "playlist" "$PLAYLIST_PAYLOAD")
-            echo "Playlist Response: ${PLAYLIST_RESPONSE}"
+            echo "::group::Creating playlist entity"
+            RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/blueprints/playlist/entities" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$PLAYLIST_PAYLOAD")
 
-            # Process videos
+            if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" != "true" ]; then
+              echo "::error::Failed to create playlist entity: $(echo "$RESPONSE" | jq -r '.message')"
+              exit 1
+            fi
+            echo "::endgroup::"
+
+            echo "title=$(echo "$TITLE" | jq -R -s .)" >> $GITHUB_OUTPUT
+            echo "count=$COUNT" >> $GITHUB_OUTPUT
+
+    process-videos:
+      needs: create-playlist
+      runs-on: ubuntu-latest
+      steps:
+        - name: Get Port Token
+          id: get_token
+          env:
+            PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
+            PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
+          run: |
+            set -e
+            TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+              -H "Content-Type: application/json" \
+              -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
+            
+            ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
+            if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+              echo "::error::Failed to get access token"
+              exit 1
+            fi
+            echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+
+        - name: Process Videos
+          env:
+            YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+            PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
+            PORT_CONTEXT: ${{ inputs.port_context }}
+            PLAYLIST_TITLE: ${{ needs.create-playlist.outputs.playlist_title }}
+          run: |
+            set -e
+            # Extract run ID
+            RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
+            if [ -z "$RUN_ID" ]; then
+              echo "::error::Failed to get run ID from context"
+              exit 1
+            fi
+
+            # Initialize counters in a temp file for persistence across subshells
+            echo "0" > /tmp/videos_processed
+            echo "0" > /tmp/videos_failed
+
+            # Function to update Port action status
+            update_action_status() {
+              local STATUS=$1
+              local SUMMARY=$2
+              local DETAILS=$3
+
+              # Check the current status of the action run
+              CURRENT_STATUS=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+                -H "Authorization: Bearer $ACCESS_TOKEN" \
+                -H "Content-Type: application/json" | jq -r '.run.status')
+
+              if [ "$CURRENT_STATUS" != "IN_PROGRESS" ]; then
+                echo "::warning::Action run is no longer in progress, skipping status update"
+                return
+              fi
+
+              curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+                -H "Authorization: Bearer $ACCESS_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{
+                  \"status\": \"$STATUS\",
+                  \"message\": {
+                    \"summary\": \"$SUMMARY\",
+                    \"details\": \"$DETAILS\"
+                  }
+                }"
+            }
+
+            # Function to add logs to the action run
+            add_action_log() {
+              local MESSAGE=$1
+
+              # Check the current status of the action run
+              CURRENT_STATUS=$(curl -s -X GET "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+                -H "Authorization: Bearer $ACCESS_TOKEN" \
+                -H "Content-Type: application/json" | jq -r '.run.status')
+
+              if [ "$CURRENT_STATUS" != "IN_PROGRESS" ]; then
+                echo "::warning::Action run is no longer in progress, skipping log addition"
+                return
+              fi
+
+              curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
+                -H "Authorization: Bearer $ACCESS_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "{
+                  \"message\": \"$MESSAGE\"
+                }"
+            }
+
+            # Function to create video entity
+            create_port_entity() {
+              local BLUEPRINT=$1
+              local PAYLOAD=$2
+              curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
+                -H "Authorization: Bearer $ACCESS_TOKEN" \
+                -H "Content-Type: application/json" \
+                -d "$PAYLOAD"
+            }
+
+            # Function to process videos
             process_videos() {
               local PAGE_TOKEN=$1
               local API_URL="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
@@ -306,23 +413,29 @@ This section outlines the data model for managing YouTube content in Port. The m
                 API_URL="${API_URL}&pageToken=${PAGE_TOKEN}"
               fi
 
+              echo "::group::Fetching videos from playlist..."
               local ITEMS_RESPONSE=$(curl -s "${API_URL}")
-              echo $ITEMS_RESPONSE | jq -r '.items[].contentDetails.videoId' | while read -r VIDEO_ID; do
-                echo "Processing video: ${VIDEO_ID}"
+              echo "::endgroup::"
+              
+              echo "$ITEMS_RESPONSE" | jq -r '.items[].contentDetails.videoId' | while read -r VIDEO_ID; do
+                echo "::group::Processing video: ${VIDEO_ID}"
+                add_action_log "Processing video: $VIDEO_ID"
                 
                 VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
                 
-                if [ "$(echo $VIDEO_DATA | jq '.items | length')" -gt 0 ]; then
-                  local V_TITLE=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.title')
-                  local V_DESC=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.description')
-                  local V_THUMB=$(echo $VIDEO_DATA | jq -r '.items[0].snippet.thumbnails.default.url')
-                  local V_DURATION=$(echo $VIDEO_DATA | jq -r '.items[0].contentDetails.duration')
-                  local V_VIEWS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.viewCount // "0"')
-                  local V_LIKES=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.likeCount // "0"')
-                  local V_COMMENTS=$(echo $VIDEO_DATA | jq -r '.items[0].statistics.commentCount // "0"')
+                if [ "$(echo "$VIDEO_DATA" | jq '.items | length')" -gt 0 ]; then
+                  local V_TITLE=$(echo "$VIDEO_DATA" | jq -r '.items[0].snippet.title')
+                  local V_DESC=$(echo "$VIDEO_DATA" | jq -r '.items[0].snippet.description')
+                  local V_THUMB=$(echo "$VIDEO_DATA" | jq -r '.items[0].snippet.thumbnails.default.url')
+                  local V_DURATION=$(echo "$VIDEO_DATA" | jq -r '.items[0].contentDetails.duration')
+                  local V_VIEWS=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.viewCount // "0"')
+                  local V_LIKES=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.likeCount // "0"')
+                  local V_COMMENTS=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.commentCount // "0"')
 
-                  # Create sanitized JSON for video
-                  local VIDEO_PAYLOAD=$(jq -n \
+                  echo "::debug::Found video: $V_TITLE"
+                  add_action_log "Found video: $V_TITLE"
+
+                  VIDEO_PAYLOAD=$(jq -n \
                     --arg id "$VIDEO_ID" \
                     --arg title "$V_TITLE" \
                     --arg desc "$V_DESC" \
@@ -349,20 +462,89 @@ This section outlines the data model for managing YouTube content in Port. The m
                       }
                     }')
 
-                  VIDEO_RESPONSE=$(create_port_entity "video" "$VIDEO_PAYLOAD")
-                  echo "Video Response: ${VIDEO_RESPONSE}"
+                  RESPONSE=$(create_port_entity "video" "$VIDEO_PAYLOAD")
+                  if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" = "true" ]; then
+                    CURRENT=$(cat /tmp/videos_processed)
+                    echo $((CURRENT + 1)) > /tmp/videos_processed
+                    echo "::debug::Successfully processed video: $V_TITLE"
+                    add_action_log "Successfully processed video: $V_TITLE"
+                  else
+                    CURRENT=$(cat /tmp/videos_failed)
+                    echo $((CURRENT + 1)) > /tmp/videos_failed
+                    echo "::error::Failed to process video: $(echo "$RESPONSE" | jq -r '.message')"
+                    add_action_log "Failed to process video: $(echo "$RESPONSE" | jq -r '.message')"
+                  fi
+
+                  # Update status every 5 videos
+                  PROCESSED=$(cat /tmp/videos_processed)
+                  FAILED=$(cat /tmp/videos_failed)
+                  if [ $((PROCESSED % 5)) -eq 0 ]; then
+                    update_action_status "SUCCESS" "Processed videos" "Processed ${PROCESSED} videos, ${FAILED} failed"
+                  fi
+
                   sleep 1
+                else
+                  CURRENT=$(cat /tmp/videos_failed)
+                  echo $((CURRENT + 1)) > /tmp/videos_failed
+                  echo "::error::No data found for video: $VIDEO_ID"
+                  add_action_log "No data found for video: $VIDEO_ID"
                 fi
+                echo "::endgroup::"
               done
 
-              local NEXT_PAGE=$(echo $ITEMS_RESPONSE | jq -r '.nextPageToken')
-              if [ "${NEXT_PAGE}" != "null" ]; then
-                process_videos "${NEXT_PAGE}"
+              # Check for next page
+              NEXT_PAGE=$(echo "$ITEMS_RESPONSE" | jq -r '.nextPageToken // empty')
+              if [ -n "$NEXT_PAGE" ]; then
+                echo "::group::Fetching next page of videos..."
+                add_action_log "Fetching next page of videos..."
+                process_videos "$NEXT_PAGE"
+                echo "::endgroup::"
               fi
             }
 
-            echo "Starting video processing"
+            # Start processing
+            echo "::group::Starting video processing for playlist: $PLAYLIST_TITLE"
+            add_action_log "Starting video processing for playlist: $PLAYLIST_TITLE"
+            update_action_status "SUCCESS" "Starting video processing" "Processing videos from YouTube playlist"
+            
             process_videos ""
+
+            # Final status update
+            PROCESSED=$(cat /tmp/videos_processed)
+            FAILED=$(cat /tmp/videos_failed)
+            
+            FINAL_SUMMARY="Completed processing"
+            FINAL_DETAILS="Processed ${PROCESSED} videos, ${FAILED} failed"
+            echo "::group::$FINAL_DETAILS"
+            add_action_log "$FINAL_DETAILS"
+            
+            if [ "$PROCESSED" -gt 0 ]; then
+              update_action_status "SUCCESS" "$FINAL_SUMMARY" "$FINAL_DETAILS"
+            else
+              update_action_status "FAILURE" "No videos were processed successfully" "$FINAL_DETAILS"
+              exit 1
+            fi
+            echo "::endgroup::"
+
+        - name: Report Failure
+          if: failure()
+          env:
+            PORT_CONTEXT: ${{ inputs.port_context }}
+          run: |
+            set -e
+            RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
+            
+            curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"status\": \"FAILURE\",
+                \"message\": {
+                  \"summary\": \"Workflow failed\",
+                  \"details\": \"Check logs for details\"
+                }
+              }"
+
   ```
 
 </details>
