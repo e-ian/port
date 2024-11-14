@@ -15,7 +15,7 @@ jobs:
   get-port-token:
     runs-on: ubuntu-latest
     outputs:
-      port_token: ${{ steps.token.outputs.port_token }}
+      token_data: ${{ steps.token.outputs.token_data }}
     steps:
       - name: Get Port Token
         id: token
@@ -34,9 +34,8 @@ jobs:
             exit 1
           fi
           
-          # URL encode the token
-          ENCODED_TOKEN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$ACCESS_TOKEN'))")
-          echo "port_token=$ENCODED_TOKEN" >> "$GITHUB_OUTPUT"
+          # Store token as JSON
+          echo "token_data=$(echo "$ACCESS_TOKEN" | jq -R -s '. | {token:.}')" >> "$GITHUB_OUTPUT"
 
   create-playlist:
     needs: get-port-token
@@ -51,11 +50,10 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_CONTEXT: ${{ inputs.port_context }}
-          ENCODED_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
         run: |
           set -e
-          # Decode the token
-          ACCESS_TOKEN=$(python3 -c "import urllib.parse; print(urllib.parse.unquote('$ENCODED_TOKEN'))")
+          # Extract token from JSON
+          ACCESS_TOKEN=$(echo '${{ needs.get-port-token.outputs.token_data }}' | jq -r '.token')
 
           echo "::group::Fetching playlist data"
           PLAYLIST_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
@@ -111,11 +109,10 @@ jobs:
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_CONTEXT: ${{ inputs.port_context }}
           PLAYLIST_TITLE: ${{ needs.create-playlist.outputs.playlist_title }}
-          ENCODED_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
         run: |
           set -e
-          # Decode the token
-          ACCESS_TOKEN=$(python3 -c "import urllib.parse; print(urllib.parse.unquote('$ENCODED_TOKEN'))")
+          # Extract token from JSON
+          ACCESS_TOKEN=$(echo '${{ needs.get-port-token.outputs.token_data }}' | jq -r '.token')
 
           # Extract run ID
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
@@ -124,7 +121,7 @@ jobs:
             exit 1
           fi
 
-          # Initialize counters in a temp file for persistence across subshells
+          # Initialize counters
           echo "0" > /tmp/videos_processed
           echo "0" > /tmp/videos_failed
 
@@ -238,7 +235,6 @@ jobs:
                   add_action_log "Failed to process video: $(echo "$RESPONSE" | jq -r '.message')" "Failed"
                 fi
 
-                # Progress update without status change
                 PROCESSED=$(cat /tmp/videos_processed)
                 FAILED=$(cat /tmp/videos_failed)
                 if [ $((PROCESSED % 5)) -eq 0 ]; then
@@ -253,7 +249,6 @@ jobs:
               fi
             done
 
-            # Check for next page
             NEXT_PAGE=$(echo "$ITEMS_RESPONSE" | jq -r '.nextPageToken // empty')
             if [ -n "$NEXT_PAGE" ]; then
               add_action_log "Fetching next page of videos..." "Next Page"
@@ -283,11 +278,10 @@ jobs:
         if: failure()
         env:
           PORT_CONTEXT: ${{ inputs.port_context }}
-          ENCODED_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
         run: |
           set -e
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
-          ACCESS_TOKEN=$(python3 -c "import urllib.parse; print(urllib.parse.unquote('$ENCODED_TOKEN'))")
+          ACCESS_TOKEN=$(echo '${{ needs.get-port-token.outputs.token_data }}' | jq -r '.token')
           
           curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
