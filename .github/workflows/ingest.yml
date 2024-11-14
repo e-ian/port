@@ -126,21 +126,6 @@ jobs:
             exit 1
           fi
 
-          # Update initial status
-          STATUS_RESPONSE=$(curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"status":"SUCCESS","message":"Starting video processing"}')
-          
-          if [ "$(echo "$STATUS_RESPONSE" | jq -r '.ok // false')" != "true" ]; then
-            echo "Failed to update status: $STATUS_RESPONSE"
-            exit 1
-          fi
-
-          # Initialize counters
-          VIDEOS_PROCESSED=0
-          VIDEOS_FAILED=0
-
           # Function to create video entity with error handling
           create_video_entity() {
             local PAYLOAD=$1
@@ -157,13 +142,28 @@ jobs:
             return 0
           }
 
-          # Function to update status with error handling
-          update_status() {
-            local MESSAGE=$1
+          # Function to update status with proper message format
+          update_action_status() {
+            local STATUS=$1
+            local SUMMARY=$2
+            local DETAILS=$3
+            
+            local STATUS_PAYLOAD=$(jq -n \
+              --arg status "$STATUS" \
+              --arg summary "$SUMMARY" \
+              --arg details "$DETAILS" \
+              '{
+                status: $status,
+                message: {
+                  summary: $summary,
+                  details: $details
+                }
+              }')
+
             local RESPONSE=$(curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
               -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
-              -d "{\"status\":\"SUCCESS\",\"message\":\"$MESSAGE\"}")
+              -d "$STATUS_PAYLOAD")
             
             if [ "$(echo "$RESPONSE" | jq -r '.ok // false')" != "true" ]; then
               echo "Failed to update status: $RESPONSE"
@@ -172,6 +172,13 @@ jobs:
             return 0
           }
 
+          # Initialize counters
+          VIDEOS_PROCESSED=0
+          VIDEOS_FAILED=0
+
+          # Initial status update
+          update_action_status "SUCCESS" "Starting video processing" "Initializing video import process"
+
           # Process videos
           echo "Starting video processing..."
           ITEMS_URL="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
@@ -179,7 +186,7 @@ jobs:
           
           if [ "$(echo "$ITEMS_RESPONSE" | jq -e '.items')" = "null" ]; then
             echo "No videos found in playlist"
-            update_status "No videos found in playlist"
+            update_action_status "SUCCESS" "No videos found" "Playlist contains no videos"
             exit 1
           fi
 
@@ -233,7 +240,9 @@ jobs:
               fi
 
               if [ $((VIDEOS_PROCESSED % 5)) -eq 0 ]; then
-                update_status "Processed ${VIDEOS_PROCESSED} videos, ${VIDEOS_FAILED} failed" || true
+                PROGRESS_SUMMARY="Processing videos"
+                PROGRESS_DETAILS="Processed ${VIDEOS_PROCESSED} videos, ${VIDEOS_FAILED} failed"
+                update_action_status "SUCCESS" "$PROGRESS_SUMMARY" "$PROGRESS_DETAILS" || true
               fi
 
               sleep 1
@@ -244,13 +253,14 @@ jobs:
           done
 
           # Final status update
-          FINAL_MESSAGE="Processing complete: ${VIDEOS_PROCESSED} videos processed, ${VIDEOS_FAILED} failed"
-          if ! update_status "$FINAL_MESSAGE"; then
+          FINAL_SUMMARY="Processing complete"
+          FINAL_DETAILS="Successfully processed ${VIDEOS_PROCESSED} videos, ${VIDEOS_FAILED} failed"
+          if ! update_action_status "SUCCESS" "$FINAL_SUMMARY" "$FINAL_DETAILS"; then
             echo "Failed to update final status"
             exit 1
           fi
 
-          echo "$FINAL_MESSAGE"
+          echo "$FINAL_DETAILS"
           [ $VIDEOS_PROCESSED -gt 0 ]
 
       - name: Report Failure
@@ -264,4 +274,11 @@ jobs:
           curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
-            -d '{"status":"FAILURE","message":"Workflow failed to complete"}'
+            -d '{
+              "status": "FAILURE",
+              "message": {
+                "summary": "Workflow failed",
+                "details": "Check GitHub Actions logs for details"
+              }
+            }'
+  
