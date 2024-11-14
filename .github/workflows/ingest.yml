@@ -15,7 +15,7 @@ jobs:
   get-port-token:
     runs-on: ubuntu-latest
     outputs:
-      token_data: ${{ steps.token.outputs.token_data }}
+      token: ${{ steps.token.outputs.token }}
     steps:
       - name: Get Port Token
         id: token
@@ -34,8 +34,8 @@ jobs:
             exit 1
           fi
           
-          # Store token as JSON
-          echo "token_data=$(echo "$ACCESS_TOKEN" | jq -R -s '. | {token:.}')" >> "$GITHUB_OUTPUT"
+          # Store token directly
+          echo "token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
 
   create-playlist:
     needs: get-port-token
@@ -50,11 +50,9 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_CONTEXT: ${{ inputs.port_context }}
+          PORT_TOKEN: ${{ needs.get-port-token.outputs.token }}
         run: |
           set -e
-          # Extract token from JSON
-          ACCESS_TOKEN=$(echo '${{ needs.get-port-token.outputs.token_data }}' | jq -r '.token')
-
           echo "::group::Fetching playlist data"
           PLAYLIST_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
           
@@ -87,7 +85,7 @@ jobs:
 
           echo "::group::Creating playlist entity"
           RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/blueprints/playlist/entities" \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Authorization: Bearer $PORT_TOKEN" \
             -H "Content-Type: application/json" \
             -d "$PLAYLIST_PAYLOAD")
 
@@ -109,11 +107,9 @@ jobs:
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_CONTEXT: ${{ inputs.port_context }}
           PLAYLIST_TITLE: ${{ needs.create-playlist.outputs.playlist_title }}
+          PORT_TOKEN: ${{ needs.get-port-token.outputs.token }}
         run: |
           set -e
-          # Extract token from JSON
-          ACCESS_TOKEN=$(echo '${{ needs.get-port-token.outputs.token_data }}' | jq -r '.token')
-
           # Extract run ID
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
           if [ -z "$RUN_ID" ]; then
@@ -137,7 +133,7 @@ jobs:
             PAYLOAD="$PAYLOAD}"
 
             curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
-              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Authorization: Bearer $PORT_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$PAYLOAD"
           }
@@ -149,7 +145,7 @@ jobs:
             local DETAILS=$3
 
             curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Authorization: Bearer $PORT_TOKEN" \
               -H "Content-Type: application/json" \
               -d "{
                 \"status\": \"$STATUS\",
@@ -165,7 +161,7 @@ jobs:
             local BLUEPRINT=$1
             local PAYLOAD=$2
             curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
-              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Authorization: Bearer $PORT_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$PAYLOAD"
           }
@@ -278,13 +274,13 @@ jobs:
         if: failure()
         env:
           PORT_CONTEXT: ${{ inputs.port_context }}
+          PORT_TOKEN: ${{ needs.get-port-token.outputs.token }}
         run: |
           set -e
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
-          ACCESS_TOKEN=$(echo '${{ needs.get-port-token.outputs.token_data }}' | jq -r '.token')
           
           curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            -H "Authorization: Bearer $PORT_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{
               "status": "FAILURE",
