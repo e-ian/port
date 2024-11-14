@@ -44,7 +44,7 @@ jobs:
           PORT_CONTEXT: ${{ inputs.port_context }}
         run: |
           set -e
-          echo "Fetching playlist data"
+          echo "::group::Fetching playlist data"
           PLAYLIST_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
           
           if [ "$(echo $PLAYLIST_DATA | jq '.items | length')" -eq 0 ]; then
@@ -74,7 +74,7 @@ jobs:
               }
             }')
 
-          echo "Creating playlist entity"
+          echo "::group::Creating playlist entity"
           RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/blueprints/playlist/entities" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
@@ -84,6 +84,7 @@ jobs:
             echo "::error::Failed to create playlist entity: $(echo "$RESPONSE" | jq -r '.message')"
             exit 1
           fi
+          echo "::endgroup::"
 
           echo "title=$(echo "$TITLE" | jq -R -s .)" >> $GITHUB_OUTPUT
           echo "count=$COUNT" >> $GITHUB_OUTPUT
@@ -147,6 +148,18 @@ jobs:
               }"
           }
 
+          # Function to add logs to the action run
+          add_action_log() {
+            local MESSAGE=$1
+            
+            curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"message\": \"$MESSAGE\"
+              }"
+          }
+
           # Function to create video entity
           create_port_entity() {
             local BLUEPRINT=$1
@@ -171,6 +184,7 @@ jobs:
             
             echo "$ITEMS_RESPONSE" | jq -r '.items[].contentDetails.videoId' | while read -r VIDEO_ID; do
               echo "::group::Processing video: ${VIDEO_ID}"
+              add_action_log "Processing video: $VIDEO_ID"
               
               VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
               
@@ -184,6 +198,7 @@ jobs:
                 local V_COMMENTS=$(echo "$VIDEO_DATA" | jq -r '.items[0].statistics.commentCount // "0"')
 
                 echo "::debug::Found video: $V_TITLE"
+                add_action_log "Found video: $V_TITLE"
 
                 VIDEO_PAYLOAD=$(jq -n \
                   --arg id "$VIDEO_ID" \
@@ -217,10 +232,12 @@ jobs:
                   CURRENT=$(cat /tmp/videos_processed)
                   echo $((CURRENT + 1)) > /tmp/videos_processed
                   echo "::debug::Successfully processed video: $V_TITLE"
+                  add_action_log "Successfully processed video: $V_TITLE"
                 else
                   CURRENT=$(cat /tmp/videos_failed)
                   echo $((CURRENT + 1)) > /tmp/videos_failed
                   echo "::error::Failed to process video: $(echo "$RESPONSE" | jq -r '.message')"
+                  add_action_log "Failed to process video: $(echo "$RESPONSE" | jq -r '.message')"
                 fi
 
                 # Update status every 5 videos
@@ -235,6 +252,7 @@ jobs:
                 CURRENT=$(cat /tmp/videos_failed)
                 echo $((CURRENT + 1)) > /tmp/videos_failed
                 echo "::error::No data found for video: $VIDEO_ID"
+                add_action_log "No data found for video: $VIDEO_ID"
               fi
               echo "::endgroup::"
             done
@@ -243,6 +261,7 @@ jobs:
             NEXT_PAGE=$(echo "$ITEMS_RESPONSE" | jq -r '.nextPageToken // empty')
             if [ -n "$NEXT_PAGE" ]; then
               echo "::group::Fetching next page of videos..."
+              add_action_log "Fetching next page of videos..."
               process_videos "$NEXT_PAGE"
               echo "::endgroup::"
             fi
@@ -250,6 +269,7 @@ jobs:
 
           # Start processing
           echo "::group::Starting video processing for playlist: $PLAYLIST_TITLE"
+          add_action_log "Starting video processing for playlist: $PLAYLIST_TITLE"
           update_action_status "SUCCESS" "Starting video processing" "Processing videos from YouTube playlist"
           
           process_videos ""
@@ -261,6 +281,7 @@ jobs:
           FINAL_SUMMARY="Completed processing"
           FINAL_DETAILS="Processed ${PROCESSED} videos, ${FAILED} failed"
           echo "::group::$FINAL_DETAILS"
+          add_action_log "$FINAL_DETAILS"
           
           if [ "$PROCESSED" -gt 0 ]; then
             update_action_status "SUCCESS" "$FINAL_SUMMARY" "$FINAL_DETAILS"
