@@ -181,16 +181,43 @@ jobs:
 
           # Process videos
           echo "Starting video processing..."
-          ITEMS_URL="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
-          ITEMS_RESPONSE=$(curl -s "$ITEMS_URL")
           
-          if [ "$(echo "$ITEMS_RESPONSE" | jq -e '.items')" = "null" ]; then
+          # Get all video IDs first
+          VIDEO_IDS=()
+          NEXT_PAGE_TOKEN=""
+          
+          while true; do
+            local ITEMS_URL="https://youtube.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=50&playlistId=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}"
+            if [ -n "$NEXT_PAGE_TOKEN" ]; then
+              ITEMS_URL="${ITEMS_URL}&pageToken=${NEXT_PAGE_TOKEN}"
+            fi
+            
+            local ITEMS_RESPONSE=$(curl -s "$ITEMS_URL")
+            
+            # Add video IDs to array
+            while read -r id; do
+              if [ -n "$id" ]; then
+                VIDEO_IDS+=("$id")
+              fi
+            done < <(echo "$ITEMS_RESPONSE" | jq -r '.items[].contentDetails.videoId')
+            
+            NEXT_PAGE_TOKEN=$(echo "$ITEMS_RESPONSE" | jq -r '.nextPageToken // empty')
+            if [ -z "$NEXT_PAGE_TOKEN" ]; then
+              break
+            fi
+          done
+
+          # Check if we found any videos
+          if [ ${#VIDEO_IDS[@]} -eq 0 ]; then
             echo "No videos found in playlist"
             update_action_status "SUCCESS" "No videos found" "Playlist contains no videos"
             exit 1
           fi
 
-          echo "$ITEMS_RESPONSE" | jq -r '.items[].contentDetails.videoId' | while read -r VIDEO_ID; do
+          echo "Found ${#VIDEO_IDS[@]} videos in playlist"
+
+          # Process each video
+          for VIDEO_ID in "${VIDEO_IDS[@]}"; do
             echo "Processing video: ${VIDEO_ID}"
             
             VIDEO_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,statistics&id=${VIDEO_ID}&key=${YOUTUBE_API_KEY}")
@@ -281,4 +308,3 @@ jobs:
                 "details": "Check GitHub Actions logs for details"
               }
             }'
-  
