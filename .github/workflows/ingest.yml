@@ -34,8 +34,8 @@ jobs:
             exit 1
           fi
           
-          # Base64 encode the token to preserve formatting
-          ENCODED_TOKEN=$(echo -n "$ACCESS_TOKEN" | base64)
+          # URL encode the token
+          ENCODED_TOKEN=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$ACCESS_TOKEN'))")
           echo "port_token=$ENCODED_TOKEN" >> "$GITHUB_OUTPUT"
 
   create-playlist:
@@ -55,7 +55,7 @@ jobs:
         run: |
           set -e
           # Decode the token
-          ACCESS_TOKEN=$(echo -n "$ENCODED_TOKEN" | base64 -d)
+          ACCESS_TOKEN=$(python3 -c "import urllib.parse; print(urllib.parse.unquote('$ENCODED_TOKEN'))")
 
           echo "::group::Fetching playlist data"
           PLAYLIST_DATA=$(curl -s "https://youtube.googleapis.com/youtube/v3/playlists?part=snippet,contentDetails&id=${PLAYLIST_ID}&key=${YOUTUBE_API_KEY}")
@@ -115,7 +115,7 @@ jobs:
         run: |
           set -e
           # Decode the token
-          ACCESS_TOKEN=$(echo -n "$ENCODED_TOKEN" | base64 -d)
+          ACCESS_TOKEN=$(python3 -c "import urllib.parse; print(urllib.parse.unquote('$ENCODED_TOKEN'))")
 
           # Extract run ID
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
@@ -287,7 +287,7 @@ jobs:
         run: |
           set -e
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
-          ACCESS_TOKEN=$(echo -n "$ENCODED_TOKEN" | base64 -d)
+          ACCESS_TOKEN=$(python3 -c "import urllib.parse; print(urllib.parse.unquote('$ENCODED_TOKEN'))")
           
           curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
             -H "Authorization: Bearer $ACCESS_TOKEN" \
