@@ -34,8 +34,8 @@ jobs:
             exit 1
           fi
           
-          # Save token as secret
-          echo "port_token=$ACCESS_TOKEN" >> $GITHUB_ENV
+          # Save token as output
+          echo "port_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
 
   create-playlist:
     needs: get-port-token
