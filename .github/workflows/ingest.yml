@@ -12,13 +12,14 @@ on:
         required: true
 
 jobs:
-  get-port-token:
+  create-playlist:
     runs-on: ubuntu-latest
     outputs:
-      port_token: ${{ steps.token.outputs.port_token }}
+      playlist_title: ${{ steps.playlist_info.outputs.title }}
+      playlist_count: ${{ steps.playlist_info.outputs.count }}
     steps:
       - name: Get Port Token
-        id: token
+        id: get_token
         env:
           PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
           PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
@@ -33,24 +34,14 @@ jobs:
             echo "::error::Failed to get access token"
             exit 1
           fi
-          
-          # Save token as output
-          echo "port_token=$ACCESS_TOKEN" >> $GITHUB_OUTPUT
+          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
 
-  create-playlist:
-    needs: get-port-token
-    runs-on: ubuntu-latest
-    outputs:
-      playlist_title: ${{ steps.playlist_info.outputs.title }}
-      playlist_count: ${{ steps.playlist_info.outputs.count }}
-    steps:
       - name: Get Playlist Info and Create Port Entity
         id: playlist_info
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_CONTEXT: ${{ inputs.port_context }}
-          PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
         run: |
           set -e
           echo "::group::Fetching playlist data"
@@ -85,7 +76,7 @@ jobs:
 
           echo "::group::Creating playlist entity"
           RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/blueprints/playlist/entities" \
-            -H "Authorization: Bearer $PORT_TOKEN" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d "$PLAYLIST_PAYLOAD")
 
@@ -97,17 +88,35 @@ jobs:
 
           echo "title=$(echo "$TITLE" | jq -R -s .)" >> $GITHUB_OUTPUT
           echo "count=$COUNT" >> $GITHUB_OUTPUT
+
   process-videos:
-    needs: [get-port-token, create-playlist]
+    needs: create-playlist
     runs-on: ubuntu-latest
     steps:
+      - name: Get Port Token
+        id: get_token
+        env:
+          PORT_CLIENT_ID: ${{ secrets.PORT_CLIENT_ID }}
+          PORT_CLIENT_SECRET: ${{ secrets.PORT_CLIENT_SECRET }}
+        run: |
+          set -e
+          TOKEN_RESPONSE=$(curl -s -X POST "https://api.getport.io/v1/auth/access_token" \
+            -H "Content-Type: application/json" \
+            -d "{\"clientId\": \"$PORT_CLIENT_ID\", \"clientSecret\": \"$PORT_CLIENT_SECRET\"}")
+          
+          ACCESS_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken')
+          if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+            echo "::error::Failed to get access token"
+            exit 1
+          fi
+          echo "ACCESS_TOKEN=$ACCESS_TOKEN" >> $GITHUB_ENV
+
       - name: Process Videos
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           PLAYLIST_ID: ${{ github.event.inputs.playlist_id }}
           PORT_CONTEXT: ${{ inputs.port_context }}
           PLAYLIST_TITLE: ${{ needs.create-playlist.outputs.playlist_title }}
-          PORT_TOKEN: ${{ needs.get-port-token.outputs.port_token }}
         run: |
           set -e
           # Extract run ID
@@ -117,7 +126,7 @@ jobs:
             exit 1
           fi
 
-          # Initialize counters
+          # Initialize counters in a temp file for persistence across subshells
           echo "0" > /tmp/videos_processed
           echo "0" > /tmp/videos_failed
 
@@ -126,6 +135,7 @@ jobs:
             local MESSAGE=$1
             local STATUS_LABEL=${2:-""}
 
+            # Send log without checking status
             local PAYLOAD="{\"message\": \"$MESSAGE\""
             if [ -n "$STATUS_LABEL" ]; then
               PAYLOAD="$PAYLOAD, \"statusLabel\": \"$STATUS_LABEL\""
@@ -133,7 +143,7 @@ jobs:
             PAYLOAD="$PAYLOAD}"
 
             curl -s -X POST "https://api.getport.io/v1/actions/runs/$RUN_ID/logs" \
-              -H "Authorization: Bearer $PORT_TOKEN" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$PAYLOAD"
           }
@@ -145,7 +155,7 @@ jobs:
             local DETAILS=$3
 
             curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-              -H "Authorization: Bearer $PORT_TOKEN" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
               -d "{
                 \"status\": \"$STATUS\",
@@ -161,7 +171,7 @@ jobs:
             local BLUEPRINT=$1
             local PAYLOAD=$2
             curl -s -X POST "https://api.getport.io/v1/blueprints/${BLUEPRINT}/entities" \
-              -H "Authorization: Bearer $PORT_TOKEN" \
+              -H "Authorization: Bearer $ACCESS_TOKEN" \
               -H "Content-Type: application/json" \
               -d "$PAYLOAD"
           }
@@ -231,6 +241,7 @@ jobs:
                   add_action_log "Failed to process video: $(echo "$RESPONSE" | jq -r '.message')" "Failed"
                 fi
 
+                # Progress update without status change
                 PROCESSED=$(cat /tmp/videos_processed)
                 FAILED=$(cat /tmp/videos_failed)
                 if [ $((PROCESSED % 5)) -eq 0 ]; then
@@ -245,6 +256,7 @@ jobs:
               fi
             done
 
+            # Check for next page
             NEXT_PAGE=$(echo "$ITEMS_RESPONSE" | jq -r '.nextPageToken // empty')
             if [ -n "$NEXT_PAGE" ]; then
               add_action_log "Fetching next page of videos..." "Next Page"
@@ -279,7 +291,7 @@ jobs:
           RUN_ID=$(echo "$PORT_CONTEXT" | jq -r --raw-input 'fromjson | .runId')
           
           curl -s -X PATCH "https://api.getport.io/v1/actions/runs/$RUN_ID" \
-            -H "Authorization: Bearer $PORT_TOKEN" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{
               "status": "FAILURE",
