@@ -1,50 +1,42 @@
-# YouTube Playlist & Videos catalogue in Port
+# YouTube Playlist & Videos catalog in Port
 
-A comprehensive guide for creating YouTube playlist & Videos catalogue in Port, including data modeling, ingestion, and visualization.
+A comprehensive guide for creating YouTube playlist & Videos catalog in Port, including data modeling, ingestion, and visualization.
 
 ## Overview
 
 This guide shows you how to set up a system for tracking YouTube playlists and video performance in Port. 
-You’ll learn how to organize your YouTube content, automate the tracking of video metrics, and create visualizations 
-to monitor playlist growth and audience engagement. The integration provides centralized content management, 
-real-time performance updates, and automated daily data updates, giving you the insights needed to make informed content decisions.
+You’ll learn how to organize your YouTube content, automate the tracking of video metrics, and create visualizations  to monitor playlist growth and audience engagement.
 
 ## Prerequisites
 
 Before starting this integration, ensure you have:
-   - Sign up at [app.getport.io](https://app.getport.io)
-   - Log into your Port account at [app.getport.io](https://app.getport.io)
-   - Install Port's Github app by clicking [here](https://github.com/apps/getport-io/installations/new)
-   - Obtain a YouTube Data API v3 key via the [Google Cloud Console](https://console.cloud.google.com)
-   - Prepare your Port organization's Client ID and Client Secret. To find you Port credentials, click [here](https://docs.getport.io/build-your-software-catalog/custom-integration/api/#find-your-port-credentials).
+   1. Sign up and Log into your Port account [app.getport.io](https://app.getport.io)
+   2. Install Port's Github app by clicking [here](https://github.com/apps/getport-io/installations/new)
+   3. Obtain a YouTube Data API v3 key via the [Google Cloud Console](https://console.cloud.google.com)
+   4. Prepare your Port organization's Client ID and Client Secret. To find you Port credentials, click [here](https://docs.getport.io/build-your-software-catalog/custom-integration/api/#find-your-port-credentials).
 
 ## Data Modeling in Port
 This section outlines the data model for managing YouTube content in Port. The model consists of two main blueprints: `playlist` and `video`, designed to track YouTube playlists and their associated videos. The relationship between playlists and videos is maintained through a one-to-many relationship, where each video belongs to a playlist.
 
 ### Setting up Blueprints
-   - Log into Port
-   - Click ["Builder"](https://app.getport.io/settings/data-model) in the left sidebar
-   - Click "+ New Blueprint"
-   - In the model that pops up, click on "{---} Edit JSON"
-   - Copy and paste the json configs below to have for the Playlist and Video blueprint properties
+   1. Log into Port
+   2. Click ["Builder"](https://app.getport.io/settings/data-model) in the left sidebar
+   3. Click "+ New Blueprint"
+   4. In the model that pops up, click on "{---} Edit JSON"
+   5. Add the **JSON** snippet below to create the **Playlist** and **Video** blueprint
 
 
 <details>
-<summary>Click to expand Playlist Blueprint JSON</summary>
+<summary><b>Playlist blueprint (click to expand )</b></summary>
 
 ```json
 {
   "identifier": "playlist",
   "description": "Youtube playlist description",
-  "title": "playlist",
-  "icon": "Microservice",
+  "title": "YouTube Playlist",
+  "icon": "Youtrack",
   "schema": {
     "properties": {
-      "title": {
-        "type": "string",
-        "title": "title",
-        "description": "title of the playlist"
-      },
       "description": {
         "type": "string",
         "title": "description",
@@ -62,7 +54,6 @@ This section outlines the data model for managing YouTube content in Port. The m
         "description": "The number of videos in the playlist"
       }
     },
-    "required": ["title"]
   },
   "mirrorProperties": {},
   "calculationProperties": {},
@@ -75,21 +66,16 @@ This section outlines the data model for managing YouTube content in Port. The m
 
 
 <details>
-<summary>Click to expand Video Blueprint JSON</summary>
+<summary><b> Video blueprint (click to expand) </b></summary>
 
 ```json
 {
   "identifier": "video",
   "description": "youtube video blueprint",
-  "title": "video",
-  "icon": "Microservice",
+  "title": "YouTube Video",
+  "icon": "Youtrack",
   "schema": {
     "properties": {
-      "title": {
-        "type": "string",
-        "title": "title",
-        "description": "the title of the video"
-      },
       "description": {
         "type": "string",
         "title": "description",
@@ -122,17 +108,16 @@ This section outlines the data model for managing YouTube content in Port. The m
         "description": "The number of comments the video has received"
       }
     },
-    "required": ["title"]
   },
   "mirrorProperties": {},
   "calculationProperties": {},
   "aggregationProperties": {},
   "relations": {
     "belongs_to": {
-      "title": "Belongs To",
+      "title": "playlist",
       "description": "relationship between video and playlist",
       "target": "playlist",
-      "required": true,
+      "required": false,
       "many": false
     }
   }
@@ -142,12 +127,20 @@ This section outlines the data model for managing YouTube content in Port. The m
 </details>
 
 ## Self service setup
-  - Navigate to Self-service in Port by clicking [here](https://app.getport.io/self-serve)
-  - Click on the "+ Action" button to create and new action. Click on "{---} Edit JSON" in the pop up
-  - Copy and paste the json configuration details below to setup the Self-Service. Edit with your details.
+- This self-service automates the process of importing YouTube playlists into your catalog, allowing users to easily add and track video content without requiring    direct access to the backend systems or API credentials.
+  1. Navigate to Self-service in Port by clicking [here](https://app.getport.io/self-serve)
+  2. Click on the "+ Action" button to create and new action.
+  3. Click on "{---} Edit JSON" in the pop up
+  4. Copy and paste the json configuration details below to setup the Self-Service.
+  > **💡 Placeholders**
+> 
+> Remember to replace:
+> - <YOUR_ORGANISATION_NAME> with your organization name
+> - <YOUR_REPO_NAME> with your repository name
+> - <SPECIFY_WORKFLOW_FILE> with the name of the workflow
 
   <details>
-  <summary>Click to expand Self-service config JSON</summary>
+  <summary><b> Action configuration (click to expand) </b></summary>
 
   ```json
   {
@@ -198,19 +191,19 @@ This section outlines the data model for managing YouTube content in Port. The m
   </details>
 
 ## GitHub workflow
-   - Go to your GitHub repository settings
-   - Add each of these secrets:
-     ```
-     YOUTUBE_API_KEY (Your YouTube Data API key)
-     PORT_API_KEY (Your Port API key)
-     PORT_CLIENT_ID (Your Port Client ID)
-     PORT_CLIENT_SECRET (Your Port Client Secret)
-     ```
-   - Create new file: `ingest.yml` in the directory `.github/workflows` and pass the secrets.
-   - Add the following GitHub Actions workflow configuration:
+   1. Go to your GitHub repository settings
+   2. Add each of these secrets:
+     
+    - YOUTUBE_API_KEY (Your YouTube Data API key)
+    - PORT_API_KEY (Your Port API key)
+    - PORT_CLIENT_ID (Your Port Client ID)
+    - PORT_CLIENT_SECRET (Your Port Client Secret)
+     
+   3. Create a new file `.github/workflows/ingest.yml` that will reference these secrets securely using GitHub's secrets context
+   4. Add the following GitHub workflow configuration:
 
 <details>
-<summary>Click to expand GitHub Workflow YAML</summary>
+<summary><b> GitHub Workflow (click to expand) </b></summary>
 
   ```yaml
   name: Ingest YouTube Playlist
@@ -524,11 +517,11 @@ This section outlines the data model for managing YouTube content in Port. The m
 - On the Self-service tab, navigate to the self-service you created and click on "Create".
 - The pop-up below will be shown, enter the value of the youtube `playlist_id` and click execute
 <details>
-<summary>Click to see example Self-Service Execution</summary>
+<summary><b> Self-service execution (click to expand) </b></summary>
 <img src="./assets/execute.png" alt="Self-Service Execution">
 </details>
 - This will trigger the workflow and you can track the progress from your port account.
-- When completed, go to catalogue to view the playlist and videos respectively.
+- When completed, go to catalog to view the playlist and videos respectively.
 
 
 ## Creating Visualizations
@@ -542,7 +535,7 @@ After the data is ingested, create these visualizations to monitor your YouTube 
 4. Configure:
 
 <details>
-<summary>Click to see details and example configuration image</summary>
+<summary><b> Video count configuration (click to expand) </b></summary>
 <img src="./assets/videocount.png" alt="Video count in playlist">
 </details>
 
@@ -552,7 +545,7 @@ After the data is ingested, create these visualizations to monitor your YouTube 
 3. Configure:
 
 <details>
-<summary>Click to see details and example configuration image</summary>
+<summary><b> Average likes configuration (click to expand) </b></summary>
 <img src="./assets/averagelikes.png" alt="Average likes card">
 </details>
 
@@ -562,7 +555,7 @@ After the data is ingested, create these visualizations to monitor your YouTube 
 3. Configure:
 
 <details>
-<summary>Click to see details and example configuration image</summary>
+<summary><b> Video details configuration (click to expand) </b></summary>
 <img src="./assets/videodetails.png" alt="Video details table">
 </details>
 
@@ -572,13 +565,25 @@ After the data is ingested, create these visualizations to monitor your YouTube 
 3. Configure:
 
 <details>
-<summary>Click to see details and example configuration image</summary>
+<summary><b>Engagement distribution configuration (click to expand) </b></summary>
 <img src="./assets/engagementdist.png" alt="Video engagement distribution">
 </details>
 
 ### YouTube Playlist Analytics Dashboard Layout
+To create a dashboard, drag and organise the different widgets created above in a meaningful layout.
 
 <details>
-<summary>Click to see example YouTube Analytics Dashboard</summary>
+<summary>Example youtube analytics dashboard (click to expand) </summary>
 <img src="./assets/youtube_analytics_dashboard.png" alt="YouTube Analytics Dashboard">
 </details>
+
+## Conclusion
+
+This guide has walked you through creating a comprehensive YouTube content catalog in Port. By implementing this integration, you've gained:
+
+1. Automated playlist and video tracking through self-service actions
+2. A structured data model for organizing YouTube content
+3. Real-time metrics and analytics through customizable dashboards
+4. Streamlined workflow for importing new playlists
+
+You can now easily track your YouTube content performance, manage multiple playlists, and make data-driven decisions about your video strategy. To extend this integration, consider adding more metrics, creating additional visualizations, or customizing the dashboards to match your specific needs.
