@@ -132,7 +132,7 @@ This section outlines the data model for managing YouTube content in Port. The m
   2. Click on the "+ Action" button to create and new action.
   3. Click on "{---} Edit JSON" in the pop up
   4. Copy and paste the json configuration details below to setup the Self-Service.
-  > **💡 Placeholders**
+  > **💡 Tip**
 > 
 > Remember to replace:
 > - <YOUR_ORGANISATION_NAME> with your organization name
