@@ -273,9 +273,7 @@ This section outlines the data model for managing YouTube content in Port. The m
               --arg count "$COUNT" \
               '{
                 identifier: $id,
-                title: $title,
                 properties: {
-                  title: $title,
                   description: $desc,
                   thumbnail_url: $thumb,
                   video_count: ($count|tonumber)
@@ -423,9 +421,7 @@ This section outlines the data model for managing YouTube content in Port. The m
                     --arg playlist_id "$PLAYLIST_ID" \
                     '{
                       identifier: $id,
-                      title: $title,
                       properties: {
-                        title: $title,
                         description: $desc,
                         thumbnail_url: $thumb,
                         duration: $duration,
