@@ -10,7 +10,7 @@ You’ll learn how to organize your YouTube content, automate the tracking of vi
 ## Prerequisites
 
 Before starting this integration, ensure you have:
-   1. Signed up and Logged into your Port account [app.getport.io](https://app.getport.io)
+   1. Signed up and logged into your Port account [app.getport.io](https://app.getport.io)
    2. Installed Port's Github app by clicking [here](https://github.com/apps/getport-io/installations/new)
    3. Obtained a YouTube Data API v3 key via the [Google Cloud Console](https://console.cloud.google.com)
    4. Prepared your Port organization's Client ID and Client Secret. To find you Port credentials, click [here](https://docs.getport.io/build-your-software-catalog/custom-integration/api/#find-your-port-credentials).
@@ -197,7 +197,6 @@ This section outlines the data model for managing YouTube content in Port. The m
    2. Add each of these secrets:
      
     - YOUTUBE_API_KEY (Your YouTube Data API key)
-    - PORT_API_KEY (Your Port API key)
     - PORT_CLIENT_ID (Your Port Client ID)
     - PORT_CLIENT_SECRET (Your Port Client Secret)
      
@@ -583,5 +582,3 @@ This guide has walked you through creating a comprehensive YouTube content catal
 2. A structured data model for organizing YouTube content
 3. Real-time metrics and analytics through customizable dashboards
 4. Streamlined workflow for importing new playlists
-
-You can now easily track your YouTube content performance, manage multiple playlists, and make data-driven decisions about your video strategy. To extend this integration, consider adding more metrics, creating additional visualizations, or customizing the dashboards to match your specific needs.
