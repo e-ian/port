@@ -146,7 +146,7 @@ This section outlines the data model for managing YouTube content in Port. The m
   {
   "identifier": "youtube",
   "title": "Ingest Playlist from YouTube",
-  "icon": "Github",
+  "icon": "Youtrack",
   "description": "Self service action to trigger an action that fetches a youtube playlist",
   "trigger": {
     "type": "self-service",
