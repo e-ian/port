@@ -53,7 +53,7 @@ This section outlines the data model for managing YouTube content in Port. The m
         "title": "videoCount",
         "description": "The number of videos in the playlist"
       }
-    },
+    }
   },
   "mirrorProperties": {},
   "calculationProperties": {},
@@ -107,7 +107,7 @@ This section outlines the data model for managing YouTube content in Port. The m
         "title": "commentCount",
         "description": "The number of comments the video has received"
       }
-    },
+    }
   },
   "mirrorProperties": {},
   "calculationProperties": {},
