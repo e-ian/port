@@ -39,18 +39,18 @@ This section outlines the data model for managing YouTube content in Port. The m
     "properties": {
       "description": {
         "type": "string",
-        "title": "description",
+        "title": "Description",
         "description": "the description of the playlist"
       },
       "thumbnail_url": {
         "type": "string",
-        "title": "thumbnailUrl",
+        "title": "Thumbnail Url",
         "description": "the URL of the playlist's thumbnail image",
         "format": "url"
       },
       "video_count": {
         "type": "number",
-        "title": "videoCount",
+        "title": "Video Count",
         "description": "The number of videos in the playlist"
       }
     }
@@ -78,33 +78,33 @@ This section outlines the data model for managing YouTube content in Port. The m
     "properties": {
       "description": {
         "type": "string",
-        "title": "description",
+        "title": "Description",
         "description": "the description of the video"
       },
       "thumbnail_url": {
         "type": "string",
-        "title": "thumbnailUrl",
+        "title": "Thumbnail Url",
         "description": "The URL of the video's thumbnail image",
         "format": "url"
       },
       "duration": {
         "type": "string",
-        "title": "duration",
+        "title": "Duration",
         "description": "the duration of the video"
       },
       "view_count": {
         "type": "number",
-        "title": "viewCount",
+        "title": "View Count",
         "description": "The number of views the video has received"
       },
       "like_count": {
         "type": "number",
-        "title": "likeCount",
+        "title": "Like Count",
         "description": "The number of likes the video has received"
       },
       "comment_count": {
         "type": "number",
-        "title": "commentCount",
+        "title": "Comment Count",
         "description": "The number of comments the video has received"
       }
     }
@@ -114,7 +114,7 @@ This section outlines the data model for managing YouTube content in Port. The m
   "aggregationProperties": {},
   "relations": {
     "belongs_to": {
-      "title": "playlist",
+      "title": "Playlist",
       "description": "relationship between video and playlist",
       "target": "playlist",
       "required": false,
@@ -156,7 +156,7 @@ This section outlines the data model for managing YouTube content in Port. The m
         "playlist_id": {
           "icon": "Youtrack",
           "type": "string",
-          "title": "playlist_id",
+          "title": "Playlist ID",
           "description": "Playlist id to be used for fetching the different respective videos"
         }
       },
